@@ -42,6 +42,7 @@ import io.github.dsheirer.spectrum.OverlayPanel.ChannelDisplay;
 import io.github.dsheirer.spectrum.converter.ComplexDecibelConverter;
 import io.github.dsheirer.spectrum.converter.DFTResultsConverter;
 import io.github.dsheirer.spectrum.menu.AveragingItem;
+import io.github.dsheirer.spectrum.menu.ReferenceLevelItem;
 import io.github.dsheirer.spectrum.menu.DFTSizeItem;
 import io.github.dsheirer.spectrum.menu.FFTWindowTypeItem;
 import io.github.dsheirer.spectrum.menu.FrameRateItem;
@@ -679,6 +680,14 @@ public class SpectralDisplayPanel extends JPanel
                     JMenu averagingMenu = new JMenu("Averaging");
                     averagingMenu.add(new AveragingItem(mSpectrumPanel, 4));
                     displayMenu.add(averagingMenu);
+
+                    /**
+                     * Reference Level menu - shifts the spectrum up/down to compensate for
+                     * hardware gain settings so the noise floor sits at a comfortable position.
+                     */
+                    JMenu referenceLevelMenu = new JMenu("Reference Level");
+                    referenceLevelMenu.add(new ReferenceLevelItem(mSpectrumPanel, mWaterfallPanel));
+                    displayMenu.add(referenceLevelMenu);
 
                     /**
                      * Channel Display setting menu

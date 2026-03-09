@@ -87,11 +87,11 @@ Changes to the spectrum display, waterfall, and related UI components.
 
 | # | File | Change Size | Description | Status |
 |---|------|-------------|-------------|--------|
-| 2.1 | `spectrum/WaterfallPanel.java` | +36/-1 | Enhanced waterfall display features | ☐ Review |
-| 2.2 | `spectrum/SpectrumPanel.java` | +31/-1 | Spectrum display improvements | ☐ Review |
-| 2.3 | `spectrum/SpectralDisplayPanel.java` | +9 | Display panel additions | ☐ Review |
-| 2.4 | `spectrum/converter/ComplexDecibelConverter.java` | +5/-2 | dB conversion improvements | ☐ Review |
-| 2.5 | `spectrum/menu/ReferenceLevelItem.java` | new file | Reference level menu item for adjusting display reference | ☐ Review |
+| 2.1 | `spectrum/WaterfallPanel.java` | +36/-1 | Reference level offset field, getter/setter (dB→color-index scaling), applied in receive() loop | ☑ Done |
+| 2.2 | `spectrum/SpectrumPanel.java` | +31/-1 | Reference level offset field, getter/setter, applied as pixel offset in drawSpectrum() | ☑ Done |
+| 2.3 | `spectrum/SpectralDisplayPanel.java` | +9 | Import ReferenceLevelItem, added "Reference Level" submenu in right-click context menu | ☑ Done |
+| 2.4 | `spectrum/converter/ComplexDecibelConverter.java` | +5/-2 | Fixed dB calculation: changed from 10*log10(power) to 20*log10(amplitude) for correct amplitude-domain scaling | ☑ Done |
+| 2.5 | `spectrum/menu/ReferenceLevelItem.java` | new file | JSlider menu item (-60 to +60 dB) that adjusts both spectrum and waterfall reference level in sync | ☑ Done |
 
 ---
 

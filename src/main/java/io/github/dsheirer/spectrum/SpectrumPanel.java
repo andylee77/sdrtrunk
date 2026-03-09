@@ -80,6 +80,9 @@ public class SpectrumPanel extends JPanel implements DFTResultsListener, Setting
     //Reference dB value set according to the source sample size
     private float mDBScale;
 
+    //Reference level offset in dB - shifts the displayed spectrum up (positive) or down (negative)
+    private float mReferenceLevelOffset = 0.0f;
+
     private int mZoom = 0;
     private int mZoomWindowOffset = 0;
 
@@ -210,6 +213,11 @@ public class SpectrumPanel extends JPanel implements DFTResultsListener, Setting
 
             float scalor = insideHeight / -mDBScale;
 
+            // Reference level offset: positive offset shifts spectrum upward (toward 0 dB top),
+            // negative offset shifts it downward (toward noise floor at bottom).
+            // In pixel space: a positive dB offset moves the trace up, which means subtracting pixels.
+            float offsetPixels = mReferenceLevelOffset * scalor;
+
     		/* Calculate based on bin size - 1, since bin 0 is rendered at zero
              * and the last bin is rendered at the width */
             float binSize = (float)size.width / ((float)(bins.length));
@@ -218,7 +226,7 @@ public class SpectrumPanel extends JPanel implements DFTResultsListener, Setting
             {
                 float height;
 
-                height = bins[x] * scalor;
+                height = (bins[x] * scalor) + offsetPixels;
 
                 if(height > insideHeight)
                 {
@@ -320,6 +328,28 @@ public class SpectrumPanel extends JPanel implements DFTResultsListener, Setting
     public int getAveraging()
     {
         return mAveraging;
+    }
+
+    /**
+     * Returns the current reference level offset in dB.
+     * Positive values shift the spectrum upward on the display; negative values shift it downward.
+     */
+    public float getReferenceLevelOffset()
+    {
+        return mReferenceLevelOffset;
+    }
+
+    /**
+     * Sets the reference level offset in dB to shift the displayed spectrum up or down.
+     * This allows the user to compensate for different hardware gain settings so the noise
+     * floor sits at a comfortable position on the display.
+     *
+     * @param offsetDb offset in dB (positive = shift spectrum up, negative = shift down)
+     */
+    public void setReferenceLevelOffset(float offsetDb)
+    {
+        mReferenceLevelOffset = offsetDb;
+        repaint();
     }
 
     /**

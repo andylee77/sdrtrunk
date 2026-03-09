@@ -77,7 +77,8 @@ public class ComplexDecibelConverter extends DFTResultsConverter
 		for(int x = 0; x < results.length; x += 2)
 		{
 			//Calculate the magnitude squared (power) value from each bin's real and imaginary value and scale it to the
-			// DFT bin size squared. Convert the scaled value to decibels.
+			// DFT bin size. Convert the scaled amplitude value to decibels using 20*log10 so that the dB range matches
+			// the display scale which is also built on 20*log10(amplitude).
 			temp = ((results[x] * results[x]) + (results[x + 1] * results[x + 1]));
 
 			if(temp == 0)
@@ -86,7 +87,9 @@ public class ComplexDecibelConverter extends DFTResultsConverter
 			}
 			else
 			{
-				decibels = 10.0f * (float)FastMath.log10(temp * dftBinSizeScalor);
+				// Use 20*log10(amplitude) = 10*log10(power) with amplitude-scaled divisor.
+				// Equivalent: 20 * log10( sqrt(temp) / halfResults )
+				decibels = 20.0f * (float)FastMath.log10((float)FastMath.sqrt(temp) * dftBinSizeScalor);
 			}
 
 			// We have to swap the upper and lower halves of the JTransforms DFT results for correct display

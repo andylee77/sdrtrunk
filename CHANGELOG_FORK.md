@@ -61,6 +61,22 @@ Extensive work documents accumulated in `C:\Users\Andy\Projects\SDRTrunk\work_do
 
 ---
 
+## [2026-03-09] Change 002: Waterfall / Spectrum UI Enhancements
+
+### New Files (1)
+- `spectrum/menu/ReferenceLevelItem.java` — JSlider widget (-60 to +60 dB) for shifting spectrum and waterfall reference level
+
+### Modified Files (4)
+- `SpectrumPanel.java` — Added reference level offset field, getter/setter, applied as pixel offset in drawSpectrum()
+- `WaterfallPanel.java` — Added reference level offset field, getter/setter (dB→color-index scaling), applied in receive() loop
+- `SpectralDisplayPanel.java` — Import ReferenceLevelItem, added "Reference Level" submenu in right-click context menu
+- `ComplexDecibelConverter.java` — Fixed dB calculation: 10*log10(power) → 20*log10(amplitude) for correct amplitude-domain scaling
+
+### Documentation
+- `doc/changes/002_waterfall_spectrum_ui.md` — Detailed change doc
+
+---
+
 ## Pending / Future
 
 - [ ] Finalize PlutoSDR tuner integration with Maia IQ streaming

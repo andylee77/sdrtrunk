@@ -70,6 +70,11 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
     private int mZoom = 0;
     private int mDFTZoomWindowOffset = 0;
 
+    // Reference level offset in pixel units (0-255 color index space).
+    // Positive values brighten the display (shift colors toward signals);
+    // negative values darken it (shift colors toward noise floor).
+    private int mReferenceLevelOffset = 0;
+
     private SettingsManager mSettingsManager;
 
     /**
@@ -191,6 +196,31 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
     public void setZoomWindowOffset(int offset)
     {
         mDFTZoomWindowOffset = offset;
+    }
+
+    /**
+     * Returns the current reference level offset (in color-index units, -128 to +128).
+     */
+    public int getReferenceLevelOffset()
+    {
+        return mReferenceLevelOffset;
+    }
+
+    /**
+     * Sets the reference level offset to shift the waterfall color mapping up or down.
+     * The offset is scaled from the dB slider range (-60..+60) to the color index range
+     * so that the waterfall brightness tracks the spectrum panel reference level.
+     *
+     * Positive values brighten the display (more bins show signal colors).
+     * Negative values darken it (more bins show noise-floor colors).
+     *
+     * @param offsetDb offset in dB from the Reference Level slider
+     */
+    public void setReferenceLevelOffset(float offsetDb)
+    {
+        // Scale dB offset to color index units. The color map spans 256 levels.
+        // A +/-60 dB range maps to roughly +/-128 color index units (about 2 units per dB).
+        mReferenceLevelOffset = Math.round(offsetDb * (128.0f / 60.0f));
     }
 
     /**
@@ -371,9 +401,14 @@ public class WaterfallPanel extends JPanel implements DFTResultsListener,
         float average = (float)(sum / (double)update.length - 1);
         float scale = 256.0f / average;
 
+        // Capture the current offset for use in the loop (thread safety)
+        final int refOffset = mReferenceLevelOffset;
+
         for(int x = 0; x < update.length - 1; x++)
         {
-            float value = (average - update[x]) * scale;
+            // Apply reference level offset: positive offset shifts pixel values up (brighter/more signal color),
+            // negative offset shifts them down (darker/more noise-floor color).
+            float value = (average - update[x]) * scale + refOffset;
 
             if(value < 0)
             {
