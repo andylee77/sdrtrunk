@@ -65,7 +65,7 @@ public class ControllerPanel extends JPanel
             playlistManager.getAliasModel());
         mNowPlayingPanel = new NowPlayingPanel(playlistManager, iconModel, userPreferences, settingsManager, detailTabsVisible);
         mMapPanel = new MapPanel(mapService, playlistManager.getAliasModel(), iconModel, settingsManager);
-        mTunerManagerPanel = new TunerViewPanel(tunerManager, userPreferences);
+        mTunerManagerPanel = new TunerViewPanel(tunerManager, userPreferences, playlistManager);
 
         init();
     }

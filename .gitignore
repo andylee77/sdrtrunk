@@ -33,3 +33,6 @@ gradle-app.setting
 
 # Cache of project
 .gradletasknamecache
+
+# Fork-specific local files
+.clinerules

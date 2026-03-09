@@ -295,6 +295,20 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
     }
 
     /**
+     * Indicates if the tuner's centre frequency is locked and should not be changed by the
+     * PolyphaseChannelSourceManager when channels are activated.
+     *
+     * <p>The default implementation returns {@code false}.  Subclasses (e.g. PlutoSdrTunerController)
+     * may override this to return a user-configurable lock state.</p>
+     *
+     * @return {@code true} if the centre frequency is locked, {@code false} otherwise
+     */
+    public boolean isFrequencyLocked()
+    {
+        return false;
+    }
+
+    /**
      * Sets the center frequency of the local oscillator.
      *
      * @param frequency in hertz

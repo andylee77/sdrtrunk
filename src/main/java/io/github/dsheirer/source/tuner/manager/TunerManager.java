@@ -37,6 +37,8 @@ import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.configuration.TunerConfigurationManager;
+import io.github.dsheirer.source.tuner.plutosdr.DiscoveredPlutoSdrTuner;
+import io.github.dsheirer.source.tuner.plutosdr.PlutoSdrTunerConfiguration;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.DiscoveredRspTuner;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayException;
@@ -169,6 +171,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             discoverSdrPlayTuners();
         }
 
+        discoverPlutoSdrTuners();
         discoverRecordingTuners();
     }
 
@@ -330,9 +333,14 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
     /**
      * Starts, configures and adds the tuner to the tuner model.
+     * This method is also called by {@link io.github.dsheirer.source.tuner.plutosdr.AddPlutoSdrTunerDialog}
+     * when the user manually adds a PlutoSDR tuner at runtime, so that the tuner goes through the
+     * same lifecycle (status listener registration, start, configuration apply) as tuners discovered
+     * at application startup.
+     *
      * @param discoveredTuner to add and configure
      */
-    private void startAndConfigureTuner(DiscoveredTuner discoveredTuner)
+    public void startAndConfigureTuner(DiscoveredTuner discoveredTuner)
     {
         discoveredTuner.addTunerStatusListener(this);
 
@@ -411,6 +419,39 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             }
 
             mSDRplay = null;
+        }
+    }
+
+    /**
+     * Discover PlutoSDR tuners from persisted configurations.
+     *
+     * <p>PlutoSDR devices are not auto-discovered via USB enumeration because they connect over
+     * Ethernet.  Instead, each PlutoSDR is represented by a persisted
+     * {@link PlutoSdrTunerConfiguration} that the user creates once through the tuner editor.
+     * On subsequent startups the configuration is reloaded and the tuner is automatically
+     * reconnected to the companion server.</p>
+     */
+    private void discoverPlutoSdrTuners()
+    {
+        ChannelizerType channelizerType = mUserPreferences.getTunerPreference().getChannelizerType();
+        List<TunerConfiguration> tunerConfigurations =
+                getTunerConfigurationManager().getTunerConfigurations(TunerType.PLUTO_SDR);
+
+        if(!tunerConfigurations.isEmpty())
+        {
+            mLog.info("Discovered [" + tunerConfigurations.size() + "] PlutoSDR tuner configuration(s)");
+        }
+
+        for(TunerConfiguration tunerConfiguration : tunerConfigurations)
+        {
+            if(tunerConfiguration instanceof PlutoSdrTunerConfiguration plutoConfig)
+            {
+                DiscoveredPlutoSdrTuner discoveredPlutoSdrTuner =
+                        new DiscoveredPlutoSdrTuner(plutoConfig, channelizerType);
+
+                startAndConfigureTuner(discoveredPlutoSdrTuner);
+                mLog.info("PlutoSDR Tuner Added: " + discoveredPlutoSdrTuner);
+            }
         }
     }
 

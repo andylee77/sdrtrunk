@@ -35,7 +35,15 @@ public class FrequencyErrorCorrectionManager
     private static final double FREQUENCY_CORRECTION_ERROR_THRESHOLD = 0.4;
     private static final long AUTO_CORRECTION_OBSERVATION_PERIOD_MILLISECONDS = 30 * 1000; //30 seconds
     private static final long INITIAL_AUTO_CORRECTION_OBSERVATION_PERIOD_MILLISECONDS = 5 * 1000; //5 seconds
+    /**
+     * Cooldown period after applying a correction before new measurements are accepted.
+     * This prevents feedback loops where a reconnect (e.g. PlutoSDR TCP reconnect) disrupts
+     * the decoder, causing it to report a large transient error that triggers another correction
+     * before the system has stabilized.
+     */
+    private static final long POST_CORRECTION_COOLDOWN_MILLISECONDS = 30 * 1000; //30 seconds
     private long mObservationPeriodStart;
+    private long mLastCorrectionTimestamp;
     private double mPPMRequired;
     private boolean mEnabled = true;
     private DecimalFormat mDecimalFormat = new DecimalFormat("0.0");
@@ -76,12 +84,27 @@ public class FrequencyErrorCorrectionManager
     }
 
     /**
-     * Resets monitoring
+     * Resets monitoring state (observation period and pending PPM value).
+     * Does NOT reset the post-correction cooldown timestamp — use {@link #resetCooldown()} for that.
      */
     public void reset()
     {
         mObservationPeriodStart = 0;
         mPPMRequired = 0;
+    }
+
+    /**
+     * Resets the post-correction cooldown timer so that new measurements are accepted immediately.
+     *
+     * <p>Call this after a manual PPM change so that the auto-correction system can start
+     * observing the new error level right away rather than waiting out the 30-second cooldown
+     * that was set by the previous auto-correction.</p>
+     */
+    public void resetCooldown()
+    {
+        mLastCorrectionTimestamp = 0;
+        reset();
+        mLog.debug("Auto-PPM: cooldown reset (manual PPM change)");
     }
 
     /**
@@ -92,12 +115,17 @@ public class FrequencyErrorCorrectionManager
         if(mEnabled && mTunerController != null && mTunerController.hasMeasuredFrequencyError())
         {
             double frequencyCorrection = mTunerController.getFrequencyCorrection();
-            frequencyCorrection -= mTunerController.getPPMFrequencyError();
+            double ppmError = mTunerController.getPPMFrequencyError();
+            frequencyCorrection -= ppmError;
 
             try
             {
-                mLog.info("Auto-Correcting Tuner PPM to [" + mDecimalFormat.format(frequencyCorrection) + "]");
+                mLog.info("Auto-Correcting Tuner PPM: current={} ppmError={} newCorrection={}",
+                        mDecimalFormat.format(mTunerController.getFrequencyCorrection()),
+                        mDecimalFormat.format(ppmError),
+                        mDecimalFormat.format(frequencyCorrection));
                 mTunerController.setFrequencyCorrection(frequencyCorrection);
+                mLastCorrectionTimestamp = System.currentTimeMillis();
                 reset();
             }
             catch(SourceException se)
@@ -109,9 +137,21 @@ public class FrequencyErrorCorrectionManager
 
     /**
      * Updates the monitor with a new PPM frequency error measurement from the tuner.
+     *
+     * <p>Measurements received within {@link #POST_CORRECTION_COOLDOWN_MILLISECONDS} of the last
+     * applied correction are silently ignored.  This prevents feedback loops where a hardware
+     * reconnect (e.g. PlutoSDR TCP reconnect) disrupts the decoder, causing it to report a large
+     * transient error that triggers another correction before the system has stabilized.</p>
      */
     public void updatePPM(double ppm)
     {
+        // Enforce post-correction cooldown: ignore measurements for 30 seconds after each correction.
+        if(mLastCorrectionTimestamp > 0 &&
+                System.currentTimeMillis() < mLastCorrectionTimestamp + POST_CORRECTION_COOLDOWN_MILLISECONDS)
+        {
+            return;
+        }
+
         if(ppm > FREQUENCY_CORRECTION_ERROR_THRESHOLD)
         {
             if(mObservationPeriodStart == 0)

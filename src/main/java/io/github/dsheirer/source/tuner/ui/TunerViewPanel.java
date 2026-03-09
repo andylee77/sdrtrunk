@@ -20,6 +20,9 @@
 package io.github.dsheirer.source.tuner.ui;
 
 import com.jidesoft.swing.JideSplitPane;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelException;
+import io.github.dsheirer.playlist.PlaylistManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
 import io.github.dsheirer.source.tuner.configuration.TunerConfigurationManager;
@@ -27,6 +30,9 @@ import io.github.dsheirer.source.tuner.manager.DiscoveredRecordingTuner;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.manager.TunerStatus;
+import io.github.dsheirer.preference.source.ChannelizerType;
+import io.github.dsheirer.source.tuner.plutosdr.AddPlutoSdrTunerDialog;
+import io.github.dsheirer.source.tuner.plutosdr.DiscoveredPlutoSdrTuner;
 import io.github.dsheirer.source.tuner.recording.AddRecordingTunerDialog;
 import java.awt.Color;
 import java.awt.Component;
@@ -40,6 +46,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.swing.JButton;
 import javax.swing.JMenuItem;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
@@ -47,6 +54,7 @@ import javax.swing.JTable;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowSorter;
 import javax.swing.SortOrder;
+import javax.swing.SwingWorker;
 import javax.swing.event.TableModelEvent;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.TableCellRenderer;
@@ -62,6 +70,8 @@ public class TunerViewPanel extends JPanel
     private static final String TABLE_PREFERENCE_KEY = "tuner.view.panel";
 
     private UserPreferences mUserPreferences;
+    private TunerManager mTunerManager;
+    private PlaylistManager mPlaylistManager;
     private DiscoveredTunerModel mDiscoveredTunerModel;
     private DiscoveredTunerEditor mDiscoveredTunerEditor;
     private TunerConfigurationManager mTunerConfigurationManager;
@@ -71,19 +81,36 @@ public class TunerViewPanel extends JPanel
     private JideSplitPane mSplitPane;
     private JButton mAddRecordingButton;
     private JButton mRemoveRecordingButton;
+    private JButton mAddPlutoSdrButton;
+    private JButton mRemovePlutoSdrButton;
+    private JButton mStopAllChannelsButton;
+    private JButton mStartAutostartChannelsButton;
 
     /**
      * Constructs an instance
      * @param tunerManager for tuners
      * @param userPreferences for making recordings in the tuner editor
+     * @param playlistManager for channel start/stop operations
      */
-    public TunerViewPanel(TunerManager tunerManager, UserPreferences userPreferences)
+    public TunerViewPanel(TunerManager tunerManager, UserPreferences userPreferences, PlaylistManager playlistManager)
     {
+        mTunerManager = tunerManager;
         mDiscoveredTunerModel = tunerManager.getDiscoveredTunerModel();
         mDiscoveredTunerEditor = new DiscoveredTunerEditor(userPreferences, tunerManager);
         mTunerConfigurationManager = tunerManager.getTunerConfigurationManager();
         mUserPreferences = userPreferences;
+        mPlaylistManager = playlistManager;
         init();
+    }
+
+    /**
+     * Constructs an instance (without playlist manager - channel control buttons will be hidden)
+     * @param tunerManager for tuners
+     * @param userPreferences for making recordings in the tuner editor
+     */
+    public TunerViewPanel(TunerManager tunerManager, UserPreferences userPreferences)
+    {
+        this(tunerManager, userPreferences, null);
     }
 
     private void init()
@@ -101,6 +128,7 @@ public class TunerViewPanel extends JPanel
         mTunerTable.getSelectionModel().addListSelectionListener(event ->
         {
             getRemoveRecordingButton().setEnabled(false);
+            getRemovePlutoSdrButton().setEnabled(false);
 
             if(!event.getValueIsAdjusting())
             {
@@ -113,6 +141,7 @@ public class TunerViewPanel extends JPanel
                     DiscoveredTuner selected = mDiscoveredTunerModel.getDiscoveredTuner(modelRow);
                     mDiscoveredTunerEditor.setItem(selected);
                     getRemoveRecordingButton().setEnabled(selected instanceof DiscoveredRecordingTuner);
+                    getRemovePlutoSdrButton().setEnabled(selected instanceof DiscoveredPlutoSdrTuner);
                 }
             }
         });
@@ -193,6 +222,15 @@ public class TunerViewPanel extends JPanel
         buttonPanel.setLayout(new MigLayout("insets 0 1 3 0", "", ""));
         buttonPanel.add(getAddRecordingButton());
         buttonPanel.add(getRemoveRecordingButton());
+        buttonPanel.add(getAddPlutoSdrButton());
+        buttonPanel.add(getRemovePlutoSdrButton());
+
+        if(mPlaylistManager != null)
+        {
+            buttonPanel.add(getStopAllChannelsButton());
+            buttonPanel.add(getStartAutostartChannelsButton());
+        }
+
         tunerTablePanel.add(buttonPanel);
 
         tunerTablePanel.setPreferredSize(new Dimension(200,200));
@@ -253,6 +291,190 @@ public class TunerViewPanel extends JPanel
         }
 
         return mRemoveRecordingButton;
+    }
+
+    private JButton getAddPlutoSdrButton()
+    {
+        if(mAddPlutoSdrButton == null)
+        {
+            mAddPlutoSdrButton = new JButton("Add PlutoSDR Tuner");
+            mAddPlutoSdrButton.setToolTipText("<html>Manually add a PlutoSDR tuner by specifying the companion server host and port.<br>" +
+                    "Ensure pluto_server.py is running before clicking this button.</html>");
+            mAddPlutoSdrButton.addActionListener(e ->
+            {
+                ChannelizerType channelizerType = mUserPreferences.getTunerPreference().getChannelizerType();
+                // Pass the TunerManager so the dialog uses startAndConfigureTuner(), which registers
+                // the status listener and starts the tuner — making it available in channel config.
+                AddPlutoSdrTunerDialog dialog = new AddPlutoSdrTunerDialog(mTunerManager, channelizerType);
+                dialog.setLocationRelativeTo(TunerViewPanel.this);
+                EventQueue.invokeLater(() -> dialog.setVisible(true));
+            });
+        }
+
+        return mAddPlutoSdrButton;
+    }
+
+    private JButton getRemovePlutoSdrButton()
+    {
+        if(mRemovePlutoSdrButton == null)
+        {
+            mRemovePlutoSdrButton = new JButton("Remove PlutoSDR Tuner");
+            mRemovePlutoSdrButton.setEnabled(false);
+            mRemovePlutoSdrButton.addActionListener(e ->
+            {
+                int[] indexes = mTunerTable.getSelectionModel().getSelectedIndices();
+
+                //With single selection mode this should always be length one
+                if(indexes.length == 1)
+                {
+                    int modelIndex = mTunerTable.convertRowIndexToModel(indexes[0]);
+                    DiscoveredTuner selected = mDiscoveredTunerModel.getDiscoveredTuner(modelIndex);
+
+                    if(selected instanceof DiscoveredPlutoSdrTuner discoveredPlutoSdrTuner)
+                    {
+                        mLog.info("Removing PlutoSDR Tuner: " + discoveredPlutoSdrTuner);
+                        discoveredPlutoSdrTuner.stop();
+                        mTunerConfigurationManager.removeTunerConfiguration(discoveredPlutoSdrTuner.getTunerConfiguration());
+                        EventQueue.invokeLater(() -> mDiscoveredTunerModel.removeDiscoveredTuner(discoveredPlutoSdrTuner));
+                    }
+                }
+            });
+        }
+
+        return mRemovePlutoSdrButton;
+    }
+
+    /**
+     * Button to stop all currently active/processing channels.
+     */
+    private JButton getStopAllChannelsButton()
+    {
+        if(mStopAllChannelsButton == null)
+        {
+            mStopAllChannelsButton = new JButton("Stop All Channels");
+            mStopAllChannelsButton.setToolTipText("<html>Stop all currently active channels.<br>" +
+                    "Use this before changing tuner bandwidth settings.</html>");
+            mStopAllChannelsButton.addActionListener(e ->
+            {
+                if(mPlaylistManager == null)
+                {
+                    return;
+                }
+
+                int confirm = JOptionPane.showConfirmDialog(TunerViewPanel.this,
+                        "Stop all currently active channels?",
+                        "Stop All Channels",
+                        JOptionPane.YES_NO_OPTION,
+                        JOptionPane.WARNING_MESSAGE);
+
+                if(confirm != JOptionPane.YES_OPTION)
+                {
+                    return;
+                }
+
+                mStopAllChannelsButton.setEnabled(false);
+                mStartAutostartChannelsButton.setEnabled(false);
+
+                new SwingWorker<Void, Void>()
+                {
+                    @Override
+                    protected Void doInBackground()
+                    {
+                        List<Channel> channels = new ArrayList<>(mPlaylistManager.getChannelModel().getChannels());
+                        int stopped = 0;
+
+                        for(Channel channel : channels)
+                        {
+                            if(channel.isProcessing())
+                            {
+                                try
+                                {
+                                    mPlaylistManager.getChannelProcessingManager().stop(channel);
+                                    stopped++;
+                                }
+                                catch(ChannelException ce)
+                                {
+                                    mLog.error("Error stopping channel [" + channel.getName() + "] - " + ce.getMessage());
+                                }
+                            }
+                        }
+
+                        mLog.info("Stopped " + stopped + " active channel(s)");
+                        return null;
+                    }
+
+                    @Override
+                    protected void done()
+                    {
+                        mStopAllChannelsButton.setEnabled(true);
+                        mStartAutostartChannelsButton.setEnabled(true);
+                    }
+                }.execute();
+            });
+        }
+
+        return mStopAllChannelsButton;
+    }
+
+    /**
+     * Button to start all channels that have the auto-start flag set.
+     */
+    private JButton getStartAutostartChannelsButton()
+    {
+        if(mStartAutostartChannelsButton == null)
+        {
+            mStartAutostartChannelsButton = new JButton("Start Autostart Channels");
+            mStartAutostartChannelsButton.setToolTipText("<html>Start all channels that have the Auto-Start flag enabled.<br>" +
+                    "Use this after changing tuner bandwidth settings to resume decoding.</html>");
+            mStartAutostartChannelsButton.addActionListener(e ->
+            {
+                if(mPlaylistManager == null)
+                {
+                    return;
+                }
+
+                mStopAllChannelsButton.setEnabled(false);
+                mStartAutostartChannelsButton.setEnabled(false);
+
+                new SwingWorker<Void, Void>()
+                {
+                    @Override
+                    protected Void doInBackground()
+                    {
+                        List<Channel> autoStartChannels = mPlaylistManager.getChannelModel().getAutoStartChannels();
+                        int started = 0;
+
+                        for(Channel channel : autoStartChannels)
+                        {
+                            if(!channel.isProcessing())
+                            {
+                                try
+                                {
+                                    mPlaylistManager.getChannelProcessingManager().start(channel);
+                                    started++;
+                                }
+                                catch(ChannelException ce)
+                                {
+                                    mLog.error("Error starting channel [" + channel.getName() + "] - " + ce.getMessage());
+                                }
+                            }
+                        }
+
+                        mLog.info("Started " + started + " autostart channel(s)");
+                        return null;
+                    }
+
+                    @Override
+                    protected void done()
+                    {
+                        mStopAllChannelsButton.setEnabled(true);
+                        mStartAutostartChannelsButton.setEnabled(true);
+                    }
+                }.execute();
+            });
+        }
+
+        return mStartAutostartChannelsButton;
     }
 
     /**

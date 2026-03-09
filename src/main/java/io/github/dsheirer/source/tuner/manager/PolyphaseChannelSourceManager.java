@@ -452,7 +452,22 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
 
                         if(updatedCenterFrequency != currentCenterFrequency && updatedCenterFrequency != 0)
                         {
-                            mTunerController.setFrequency(updatedCenterFrequency);
+                            // If the tuner controller has its centre frequency locked (e.g. PlutoSDR
+                            // frequency-lock checkbox), do NOT call setFrequency().  Calling it would
+                            // update the FrequencyController's mFrequency field and broadcast a
+                            // NOTIFICATION_FREQUENCY_CHANGE event, which shifts the spectrum overlay
+                            // even though the hardware never actually retunes.  The channel will still
+                            // be allocated at the correct offset from the actual (locked) centre frequency.
+                            if(!mTunerController.isFrequencyLocked())
+                            {
+                                mTunerController.setFrequency(updatedCenterFrequency);
+                            }
+                            else
+                            {
+                                mLog.debug("PolyphaseChannelSourceManager - skipping centre frequency update " +
+                                        "from {} to {} Hz (tuner frequency is locked)",
+                                        currentCenterFrequency, updatedCenterFrequency);
+                            }
                         }
 
                         //If we're successful to here, allocate the channel
