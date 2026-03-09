@@ -113,24 +113,50 @@ Explicitly not bringing these in.
 | `preference/source/ChannelizerType.java` | Added DDC enum value |
 | `preference/source/TunerPreference.java` | DDC preference support |
 
-### 3.2 P25 Decoder Changes (13 files)
+### 3.2 P25 Decoder Changes (14 files)
 
-| # | File | Status |
-|---|------|--------|
-| 3.2.1 | `module/decode/p25/P25TrafficChannelEventTracker.java` | ☐ Deferred |
-| 3.2.2 | `module/decode/p25/P25TrafficChannelManager.java` | ☐ Deferred |
-| 3.2.3 | `module/decode/p25/audio/P25P1AudioModule.java` | ☐ Deferred |
-| 3.2.4 | `module/decode/p25/phase1/DecodeConfigP25.java` | ☐ Deferred |
-| 3.2.5 | `module/decode/p25/phase1/P25P1DecoderC4FM.java` | ☐ Deferred |
-| 3.2.6 | `module/decode/p25/phase1/P25P1DecoderLSM.java` | ☐ Deferred |
-| 3.2.7 | `module/decode/p25/phase1/P25P1DecoderState.java` | ☐ Deferred |
-| 3.2.8 | `module/decode/p25/phase1/P25P1DemodulatorLSM.java` | ☐ Deferred |
-| 3.2.9 | `module/decode/p25/phase1/P25P1MessageAssembler.java` | ☐ Deferred |
-| 3.2.10 | `module/decode/p25/phase1/P25P1MessageFramer.java` | ☐ Deferred |
-| 3.2.11 | `module/decode/p25/phase1/message/lc/LinkControlOpcode.java` | ☐ Deferred |
-| 3.2.12 | `module/decode/p25/phase1/message/ldu/LDU1Message.java` | ☐ Deferred |
-| 3.2.13 | `module/decode/p25/phase2/P25P2DecoderState.java` | ☐ Deferred |
-| 3.2.14 | `module/decode/p25/phase2/message/mac/MacOpcode.java` | ☐ Deferred |
+**Investigation notes (2026-03-09):** The modified source contains +638/-33 lines of P25 changes across
+14 files. User reports that decoding works noticeably better on the modified build (using heterodyne
+channelizer), but still sees CRC errors. Key observations:
+
+- **P25P1MessageFramer.java (+86 lines)** is the **#1 priority** for CRC error investigation. The framer
+  handles sync detection and frame alignment — if frames aren't properly aligned before CRC checking,
+  every frame will fail CRC. The +86 lines of changes likely contain improved sync recovery, better
+  handling of frame boundary detection, and possibly tolerance for bit errors in sync words.
+
+- **P25P1AudioModule.java (+372 lines)** has the largest change — likely improved voice frame handling
+  and back-to-back transmission continuity. This wouldn't directly affect CRC errors but would improve
+  overall audio quality once frames are decoded.
+
+- **P25TrafficChannelManager.java (+100 lines)** — better traffic channel tracking/handoff, fewer missed
+  transmissions during channel switches.
+
+- **Heterodyne vs Polyphase:** User reports heterodyne channelizer decodes better than polyphase for P25.
+  Likely because heterodyne gives a cleaner, more direct signal path for a single channel — the polyphase
+  filter bank can introduce transition-band artifacts at channel edges that affect symbol timing.
+
+**Recommended investigation order for CRC errors:**
+1. Start with `P25P1MessageFramer.java` — diff the changes, understand sync detection improvements
+2. Then `P25P1DecoderLSM.java` (+10 lines) — LSM is the heterodyne decoder path
+3. Then `P25P1MessageAssembler.java` (+4 lines) — message assembly changes
+4. Then `P25P1DecoderC4FM.java` (+8 lines) — C4FM decoder path changes (may cross-apply to LSM)
+
+| # | File | Change Size | Description | Status |
+|---|------|-------------|-------------|--------|
+| 3.2.1 | `module/decode/p25/P25TrafficChannelEventTracker.java` | +4/-4 | Minor event tracking changes | ☐ Deferred |
+| 3.2.2 | `module/decode/p25/P25TrafficChannelManager.java` | +100 | Traffic channel management improvements | ☐ Deferred |
+| 3.2.3 | `module/decode/p25/audio/P25P1AudioModule.java` | +372 | Major audio module rewrite | ☐ Deferred |
+| 3.2.4 | `module/decode/p25/phase1/DecodeConfigP25.java` | +12 | New configuration options | ☐ Deferred |
+| 3.2.5 | `module/decode/p25/phase1/P25P1DecoderC4FM.java` | +8/-8 | C4FM decoder tweaks | ☐ Deferred |
+| 3.2.6 | `module/decode/p25/phase1/P25P1DecoderLSM.java` | +10/-10 | LSM (heterodyne) decoder changes | ☐ Deferred |
+| 3.2.7 | `module/decode/p25/phase1/P25P1DecoderState.java` | +6/-6 | Decoder state changes | ☐ Deferred |
+| 3.2.8 | `module/decode/p25/phase1/P25P1DemodulatorLSM.java` | +3 | LSM demodulator addition | ☐ Deferred |
+| 3.2.9 | `module/decode/p25/phase1/P25P1MessageAssembler.java` | +4/-4 | Message assembly improvements | ☐ Deferred |
+| 3.2.10 | `module/decode/p25/phase1/P25P1MessageFramer.java` | +86 | **🔍 CRC INVESTIGATION START HERE** — sync detection / frame alignment | ☐ Deferred |
+| 3.2.11 | `module/decode/p25/phase1/message/lc/LinkControlOpcode.java` | +2/-2 | Opcode enum change | ☐ Deferred |
+| 3.2.12 | `module/decode/p25/phase1/message/ldu/LDU1Message.java` | +56 | Additional LDU1 voice frame parsing | ☐ Deferred |
+| 3.2.13 | `module/decode/p25/phase2/P25P2DecoderState.java` | +4/-4 | Phase 2 decoder state changes | ☐ Deferred |
+| 3.2.14 | `module/decode/p25/phase2/message/mac/MacOpcode.java` | +4/-4 | MAC opcode enum changes | ☐ Deferred |
 
 ### 3.3 Audio Playback Changes (5 files)
 
