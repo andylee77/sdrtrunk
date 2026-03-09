@@ -35,6 +35,12 @@ sdrtrunk/
 │   │       └── ...
 │   └── test/             ← JUnit test source
 │
+├── tools/
+│   └── plutosdr/
+│       ├── pluto_server.py   ← Python companion TCP server (required for PlutoSDR)
+│       ├── poll_device.py    ← Device discovery/validation utility
+│       └── README.md         ← PlutoSDR setup guide & protocol reference
+│
 ├── gradle/               ← Gradle wrapper files
 ├── artifacts/            ← Build artifacts config
 ├── .github/              ← GitHub Actions workflows
@@ -144,3 +150,4 @@ Located at `C:\Users\Andy\Projects\SDRTrunk\work_docs\`:
 |------|---------|---------------|
 | 2026-03-08 | Project setup | Forked repo, created plutosdr branch, set up workspace docs |
 | 2026-03-08 | Migration analysis | Diffed modified source against fresh clone, identified 81 changed files across 13 categories. Created `DEVPLAN.md` with full migration work plan. Phase 1 (PlutoSDR, 22 items) and Phase 2 (Waterfall/Spectrum, 5 items) prioritized. DDC channelizer explicitly skipped. Updated `.clinerules` to clarify `doc/changes/` is for completed changes only. |
+| 2026-03-08 | PlutoSDR companion tools | Added `tools/plutosdr/` with the 3 essential files from the migration source: `pluto_server.py` (companion TCP server), `README.md` (setup guide + protocol reference), `poll_device.py` (device utility). ~70 other files in the migration source (server variants, test scripts, investigation docs) left in `work_docs/` — they're dev artifacts, not user-facing. |

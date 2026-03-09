@@ -71,13 +71,13 @@ Surgical edits to existing files that wire PlutoSDR into the tuner framework. Th
 | 1.3.9 | `source/tuner/manager/FrequencyErrorCorrectionManager.java` | modified | Added 30s cooldown, `resetCooldown()`, improved logging | PlutoSDR needs to reset the auto-PPM observation cooldown after a manual correction | ☑ Done |
 | 1.3.10 | `source/tuner/manager/PolyphaseChannelSourceManager.java` | modified | Added frequency-lock check before retuning | **Clean: only PlutoSDR frequency-lock check, no DDC code.** | ☑ Done |
 
-### 1.4 Documentation
+### 1.4 Documentation / Companion Tools
 
 | # | File | Description | Status |
 |---|------|-------------|--------|
-| 1.4.1 | `docs/plutosdr/pluto_server.py` | Reference Python companion server implementation | ☐ Review/copy |
-| 1.4.2 | `docs/plutosdr/README.md` | PlutoSDR integration documentation | ☐ Review/copy |
-| 1.4.3 | `docs/plutosdr/poll_device.py` | Device polling utility | ☐ Review/copy |
+| 1.4.1 | `tools/plutosdr/pluto_server.py` | Python companion TCP server (required to run PlutoSDR with SDRTrunk) | ☑ Done |
+| 1.4.2 | `tools/plutosdr/README.md` | PlutoSDR setup guide, protocol reference, troubleshooting | ☑ Done |
+| 1.4.3 | `tools/plutosdr/poll_device.py` | Device discovery/validation utility | ☑ Done |
 
 ---
 
