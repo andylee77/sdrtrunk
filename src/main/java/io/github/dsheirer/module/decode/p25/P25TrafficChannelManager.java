@@ -1220,6 +1220,14 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         if(tracker != null && tracker.isSameCallCheckingToOnly(ic, timestamp))
         {
+            //If we're ignoring encrypted calls, just update duration and don't allocate a traffic channel
+            if(mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted())
+            {
+                tracker.updateDurationControl(timestamp);
+                broadcast(tracker);
+                return;
+            }
+
             Identifier from = ic.getFromIdentifier();
 
             if(from != null && tracker.isDifferentTalker(from))
@@ -1364,6 +1372,14 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         if(tracker != null && tracker.isSameCallCheckingToOnly(ic, timestamp))
         {
+            //If we're ignoring encrypted calls, just update duration and don't allocate a traffic channel
+            if(mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted())
+            {
+                tracker.updateDurationControl(timestamp);
+                broadcast(tracker);
+                return;
+            }
+
             Identifier from = ic.getFromIdentifier();
 
             if(from != null && tracker.isDifferentTalker(from))
