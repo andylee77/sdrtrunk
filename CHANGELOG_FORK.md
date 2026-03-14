@@ -77,6 +77,23 @@ Extensive work documents accumulated in `C:\Users\Andy\Projects\SDRTrunk\work_do
 
 ---
 
+## [2026-03-14] Change 003: Ignore Encrypted Calls Option
+
+### Modified Files (3)
+- `module/decode/p25/phase1/DecodeConfigP25.java` — Added `mIgnoreEncryptedCalls` boolean field with Jackson XML serialization, getter, and setter
+- `gui/playlist/channel/P25P1ConfigurationEditor.java` — Added "Ignore Encrypted Calls" ToggleSwitch to the P25 Phase 1 decoder panel, with load/save support
+- `module/decode/p25/P25TrafficChannelManager.java` — Added `mIgnoreEncryptedCalls` field, reads from config in constructor, filters encrypted grants in `processPhase1ControlChannelGrant()` and `processPhase2ChannelGrant()`
+
+### Behavior
+- When enabled, encrypted channel grants are logged as "IGNORED: ENCRYPTED CALL" but do not consume a traffic channel slot
+- Setting persisted in playlist XML as `ignore_encrypted_calls` attribute on the decode configuration element
+- Works for both P25 Phase 1 and Phase 2 channel grants
+
+### Documentation
+- `doc/changes/003_ignore_encrypted_calls.md` — Detailed change doc
+
+---
+
 ## Pending / Future
 
 - [ ] Finalize PlutoSDR tuner integration with Maia IQ streaming

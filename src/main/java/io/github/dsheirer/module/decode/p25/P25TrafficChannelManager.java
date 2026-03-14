@@ -123,6 +123,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private ScrambleParameters mPhase2ScrambleParameters;
     private Listener<IMessage> mMessageListener;
     private boolean mIgnoreDataCalls;
+    private boolean mIgnoreEncryptedCalls;
     //Used only for data calls
     private DecodeEventDuplicateDetector mDuplicateDetector = new DecodeEventDuplicateDetector();
     private TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
@@ -138,12 +139,14 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         if(parentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1 phase1)
         {
             mIgnoreDataCalls = phase1.getIgnoreDataCalls();
+            mIgnoreEncryptedCalls = phase1.getIgnoreEncryptedCalls();
             createPhase1TrafficChannels(phase1.getTrafficChannelPoolSize(), phase1);
             createPhase2TrafficChannels(phase1.getTrafficChannelPoolSize(), new DecodeConfigP25Phase2());
         }
         else if(parentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase2 phase2)
         {
             mIgnoreDataCalls = phase2.getIgnoreDataCalls();
+            mIgnoreEncryptedCalls = phase2.getIgnoreEncryptedCalls();
             createPhase1TrafficChannels(phase2.getTrafficChannelPoolSize(), new DecodeConfigP25Phase1());
             createPhase2TrafficChannels(phase2.getTrafficChannelPoolSize(), phase2);
         }
@@ -1286,6 +1289,23 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             return;
         }
 
+        if(mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted())
+        {
+            if(tracker == null)
+            {
+                P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
+                        .channelDescriptor(apco25Channel)
+                        .details("IGNORED: ENCRYPTED CALL " + (serviceOptions != null ? serviceOptions : ""))
+                        .identifiers(ic)
+                        .build();
+                tracker = new P25TrafficChannelEventTracker(event);
+                addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
+                broadcast(tracker);
+            }
+
+            return;
+        }
+
         String details = isDataChannelGrant ? "PHASE 1 DATA CHANNEL GRANT " : "PHASE 1 CHANNEL GRANT " +
                 (serviceOptions != null ? serviceOptions : "");
 
@@ -1398,6 +1418,21 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             tracker = new P25TrafficChannelEventTracker(event);
             addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
+            broadcast(tracker);
+            return;
+        }
+
+        if(mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted() && tracker == null)
+        {
+            P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
+                .channelDescriptor(apco25Channel)
+                .details("IGNORED: ENCRYPTED CALL " + (serviceOptions != null ? serviceOptions : ""))
+                .identifiers(ic)
+                .timeslot(apco25Channel.getTimeslot())
+                .build();
+
+            tracker = new P25TrafficChannelEventTracker(event);
+            addTracker(tracker, frequency, timeslot);
             broadcast(tracker);
             return;
         }

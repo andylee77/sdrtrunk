@@ -34,6 +34,7 @@ public abstract class DecodeConfigP25 extends DecodeConfiguration
 {
     private int mTrafficChannelPoolSize = TRAFFIC_CHANNEL_LIMIT_DEFAULT;
     private boolean mIgnoreDataCalls = false;
+    private boolean mIgnoreEncryptedCalls = false;
 
     public DecodeConfigP25()
     {
@@ -48,6 +49,17 @@ public abstract class DecodeConfigP25 extends DecodeConfiguration
     public void setIgnoreDataCalls(boolean ignore)
     {
         mIgnoreDataCalls = ignore;
+    }
+
+    @JacksonXmlProperty(isAttribute = true, localName = "ignore_encrypted_calls")
+    public boolean getIgnoreEncryptedCalls()
+    {
+        return mIgnoreEncryptedCalls;
+    }
+
+    public void setIgnoreEncryptedCalls(boolean ignore)
+    {
+        mIgnoreEncryptedCalls = ignore;
     }
 
 
