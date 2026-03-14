@@ -92,6 +92,11 @@ Extensive work documents accumulated in `C:\Users\Andy\Projects\SDRTrunk\work_do
 ### Documentation
 - `doc/changes/003_ignore_encrypted_calls.md` — Detailed change doc
 
+### Bugfix: Same-Call Re-Allocation Bypass (ef329cd9)
+- **Bug:** Repeated channel grant updates for the same encrypted call entered the "same call" code path, which bypassed the encrypted filter and allocated a traffic channel anyway
+- **Fix:** Added early-return encrypted check at the top of both "same call" blocks in `processPhase1ControlChannelGrant()` and `processPhase2ChannelGrant()`
+- See `doc/changes/003_ignore_encrypted_calls.md` for full details
+
 ---
 
 ## Pending / Future
