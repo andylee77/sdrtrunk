@@ -99,6 +99,28 @@ Extensive work documents accumulated in `C:\Users\Andy\Projects\SDRTrunk\work_do
 
 ---
 
+## [2026-03-14] Change 004: Event Tab Pre-Filter and Filtered Save-to-CSV
+
+### Modified Files (3)
+- `module/decode/event/ClearableHistoryModel.java` — Added `FilterSet` reference, `preFilterEnabled` flag, `saveEnabled` flag, and `ISaveEventListener` callback interface. The `add()` method now checks the filter before storing events (pre-filter) and forwards passing events to the save listener.
+- `module/decode/event/HistoryManagementPanel.java` — Added "Pre-Filter" checkbox and "Save" checkbox to the toolbar, with tooltips. Added `setSaveToggleCallback()` and `isSaveSelected()` methods.
+- `module/decode/event/DecodeEventPanel.java` — Added CSV save infrastructure: `openSaveFile()`, `closeSaveFile()`, `writeEventToSaveFile()` with human-readable formatting (resolved aliases, formatted timestamps, duration in seconds, frequency in MHz). Wired save toggle callback and save event listener. Closes save file on channel switch.
+
+### Behavior
+- **Pre-Filter:** When the "Pre-Filter" checkbox is enabled, events that don't pass the filter are dropped entirely and don't consume buffer space. Only affects new incoming events.
+- **Save:** When the "Save" checkbox is enabled, filtered events are written to a CSV file (`<timestamp>_filtered_events.csv`) in the event logs directory with the same human-readable columns shown in the UI: Time, Duration, Event, From, From Alias, To, To Alias, Channel, Frequency, Details.
+- The existing post-filter (JTable RowFilter) behavior is completely unchanged when Pre-Filter is unchecked.
+- Both controls also appear on the Messages tab. Pre-Filter works for messages. Save is a no-op on Messages (no listener configured).
+
+### Bugfix: ClassCastException on Messages Tab
+- **Bug:** `HistoryManagementPanel.updateFilterSet()` called `mModel.setFilterSet(filterSet)`, setting a `FilterSet<IMessage>` on `ClearableHistoryModel<MessageItem>`, causing ClassCastException when `add()` checked the filter
+- **Fix:** Removed `mModel.setFilterSet()` from `HistoryManagementPanel`, set filter directly on model in `DecodeEventPanel` where generics types match
+
+### Documentation
+- `doc/changes/004_event_prefilter_and_save.md` — Detailed change doc
+
+---
+
 ## Pending / Future
 
 - [ ] Finalize PlutoSDR tuner integration with Maia IQ streaming

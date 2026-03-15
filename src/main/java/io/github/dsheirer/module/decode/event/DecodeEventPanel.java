@@ -37,15 +37,24 @@ import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.util.TimeStamp;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.EventQueue;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.nio.file.Path;
 import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import net.miginfocom.swing.MigLayout;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.QuoteMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -78,6 +87,14 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
     private TableRowSorter<TableModel> mTableRowSorter;
     private HistoryManagementPanel<IDecodeEvent> mHistoryManagementPanel;
 
+    // CSV save state
+    private Writer mSaveWriter;
+    private SimpleDateFormat mSaveTimestampFormat;
+    private DecimalFormat mSaveFrequencyFormat = new DecimalFormat("0.00000");
+    private DecimalFormat mSaveDurationFormat = new DecimalFormat("0.0");
+    private final CSVFormat mCsvFormat = CSVFormat.Builder.create(CSVFormat.DEFAULT)
+            .setQuoteMode(QuoteMode.ALL)
+            .build();
 
     /**
      * View for call event table
@@ -92,6 +109,7 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
         mAliasModel = aliasModel;
         mUserPreferences = userPreferences;
         mTimestampCellRenderer = new TimestampCellRenderer();
+        mSaveTimestampFormat = userPreferences.getDecodeEventPreference().getTimestampFormat().getFormatter();
         mTable = new JTable(mEventModel);
         mTableRowSorter = new TableRowSorter<>(mEventModel);
         mTableRowSorter.setRowFilter(new EventRowFilter());
@@ -100,6 +118,12 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
         updateCellRenderers();
         mHistoryManagementPanel = new HistoryManagementPanel<>(mEventModel, "Event Filter Editor");
         mHistoryManagementPanel.updateFilterSet(mFilterSet);
+        mEventModel.setFilterSet(mFilterSet);
+        mHistoryManagementPanel.setSaveToggleCallback(this::handleSaveToggle);
+
+        // Set up the save event listener on the model
+        mEventModel.setSaveEventListener(this::writeEventToSaveFile);
+
         add(mHistoryManagementPanel, "span,growx");
         mEmptyScroller = new JScrollPane(mTable);
         add(mEmptyScroller);
@@ -111,6 +135,7 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
     public void dispose()
     {
         MyEventBus.getGlobalEventBus().unregister(this);
+        closeSaveFile();
     }
 
     /**
@@ -122,7 +147,10 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
     {
         if(preferenceType == PreferenceType.DECODE_EVENT || preferenceType == PreferenceType.TALKGROUP_FORMAT)
         {
-            EventQueue.invokeLater(() -> mTimestampCellRenderer.updatePreferences());
+            EventQueue.invokeLater(() -> {
+                mTimestampCellRenderer.updatePreferences();
+                mSaveTimestampFormat = mUserPreferences.getDecodeEventPreference().getTimestampFormat().getFormatter();
+            });
         }
     }
 
@@ -146,6 +174,9 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
             mCurrentEventHistory.removeListener(mEventModel);
         }
 
+        // Close any open save file when switching channels
+        closeSaveFile();
+
         EventQueue.invokeLater(() -> {
             if(processingChain != null)
             {
@@ -162,6 +193,272 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
             }
         });
     }
+
+    // ========================================================================
+    // CSV Save functionality
+    // ========================================================================
+
+    /**
+     * Handles the Save checkbox toggle. Opens or closes the CSV file.
+     */
+    private void handleSaveToggle()
+    {
+        if(mHistoryManagementPanel.isSaveSelected())
+        {
+            openSaveFile();
+        }
+        else
+        {
+            closeSaveFile();
+        }
+    }
+
+    /**
+     * Opens a new CSV file for writing filtered events.
+     */
+    private void openSaveFile()
+    {
+        try
+        {
+            Path eventLogDir = mUserPreferences.getDirectoryPreference().getDirectoryEventLog();
+            String fileName = TimeStamp.getLongTimeStamp("_") + "_filtered_events.csv";
+            String fullPath = eventLogDir + File.separator + fileName;
+
+            mSaveWriter = new OutputStreamWriter(new FileOutputStream(fullPath));
+            mSaveWriter.write(getSaveCSVHeader() + "\n");
+            mSaveWriter.flush();
+
+            mLog.info("Opened filtered event save file: " + fullPath);
+        }
+        catch(Exception e)
+        {
+            mLog.error("Error opening filtered event save file", e);
+            mSaveWriter = null;
+            mEventModel.setSaveEnabled(false);
+        }
+    }
+
+    /**
+     * Closes the current CSV save file.
+     */
+    private void closeSaveFile()
+    {
+        if(mSaveWriter != null)
+        {
+            try
+            {
+                mSaveWriter.flush();
+                mSaveWriter.close();
+                mLog.info("Closed filtered event save file");
+            }
+            catch(Exception e)
+            {
+                mLog.error("Error closing filtered event save file", e);
+            }
+
+            mSaveWriter = null;
+        }
+
+        mEventModel.setSaveEnabled(false);
+    }
+
+    /**
+     * CSV header matching the visible columns in the Events tab.
+     */
+    private static String getSaveCSVHeader()
+    {
+        return "\"Time\",\"Duration\",\"Event\",\"From\",\"From Alias\",\"To\",\"To Alias\",\"Channel\",\"Frequency\",\"Details\"";
+    }
+
+    /**
+     * Writes a single decode event to the save CSV file with human-readable formatting
+     * that matches the UI columns (resolved aliases, formatted timestamps, etc.).
+     * @param event the event to write
+     */
+    private void writeEventToSaveFile(IDecodeEvent event)
+    {
+        if(mSaveWriter == null)
+        {
+            return;
+        }
+
+        try
+        {
+            List<Object> cells = new ArrayList<>();
+
+            // Time
+            cells.add(mSaveTimestampFormat.format(new Date(event.getTimeStart())));
+
+            // Duration (seconds)
+            if(event.getDuration() > 0)
+            {
+                cells.add(mSaveDurationFormat.format((double)event.getDuration() / 1e3d));
+            }
+            else
+            {
+                cells.add("");
+            }
+
+            // Event type
+            cells.add(event.getEventType().getLabel());
+
+            // From ID
+            IdentifierCollection identifierCollection = event.getIdentifierCollection();
+            String fromId = formatIdentifiers(identifierCollection, Role.FROM);
+            cells.add(fromId != null ? fromId : "");
+
+            // From Alias
+            String fromAlias = formatAliases(identifierCollection, Role.FROM);
+            cells.add(fromAlias != null ? fromAlias : "");
+
+            // To ID
+            String toId = formatIdentifiers(identifierCollection, Role.TO);
+            cells.add(toId != null ? toId : "");
+
+            // To Alias
+            String toAlias = formatAliases(identifierCollection, Role.TO);
+            cells.add(toAlias != null ? toAlias : "");
+
+            // Channel
+            IChannelDescriptor descriptor = event.getChannelDescriptor();
+            if(descriptor != null)
+            {
+                if(event.hasTimeslot())
+                {
+                    cells.add(descriptor + " TS" + event.getTimeslot());
+                }
+                else
+                {
+                    cells.add(descriptor.toString());
+                }
+            }
+            else if(event.hasTimeslot())
+            {
+                cells.add("TS" + event.getTimeslot());
+            }
+            else
+            {
+                cells.add("");
+            }
+
+            // Frequency
+            if(descriptor != null)
+            {
+                long frequency = descriptor.getDownlinkFrequency();
+                if(frequency > 0)
+                {
+                    cells.add(mSaveFrequencyFormat.format(frequency / 1e6d));
+                }
+                else
+                {
+                    cells.add("");
+                }
+            }
+            else
+            {
+                cells.add("");
+            }
+
+            // Details
+            String details = event.getDetails();
+            cells.add(details != null ? details : "");
+
+            String csvLine = mCsvFormat.format(cells.toArray());
+            mSaveWriter.write(csvLine + "\n");
+            mSaveWriter.flush();
+        }
+        catch(Exception e)
+        {
+            mLog.error("Error writing event to filtered save file", e);
+        }
+    }
+
+    /**
+     * Formats identifiers for a given role as a comma-separated string (matching the UI display).
+     * @param identifierCollection to extract identifiers from
+     * @param role to filter by
+     * @return formatted string or null
+     */
+    private String formatIdentifiers(IdentifierCollection identifierCollection, Role role)
+    {
+        if(identifierCollection == null)
+        {
+            return null;
+        }
+
+        List<Identifier> identifiers = identifierCollection.getIdentifiers(role);
+        if(identifiers == null || identifiers.isEmpty())
+        {
+            return null;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for(Identifier identifier : identifiers)
+        {
+            if(sb.length() > 0)
+            {
+                sb.append(",");
+            }
+
+            if(identifier.getForm() == Form.TALKGROUP || identifier.getForm() == Form.RADIO ||
+               identifier.getForm() == Form.PATCH_GROUP)
+            {
+                sb.append(mUserPreferences.getTalkgroupFormatPreference().format(identifier));
+            }
+            else
+            {
+                sb.append(identifier);
+            }
+        }
+
+        return sb.toString();
+    }
+
+    /**
+     * Resolves aliases for identifiers in a given role (matching the UI alias columns).
+     * @param identifierCollection to resolve aliases for
+     * @param role to filter by
+     * @return alias string or null
+     */
+    private String formatAliases(IdentifierCollection identifierCollection, Role role)
+    {
+        if(identifierCollection == null)
+        {
+            return null;
+        }
+
+        List<Identifier> identifiers = identifierCollection.getIdentifiers(role);
+        if(identifiers == null || identifiers.isEmpty())
+        {
+            return null;
+        }
+
+        AliasList aliasList = mAliasModel.getAliasList(identifierCollection);
+        if(aliasList == null)
+        {
+            return null;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for(Identifier identifier : identifiers)
+        {
+            List<Alias> aliases = aliasList.getAliases(identifier);
+            if(!aliases.isEmpty())
+            {
+                if(sb.length() > 0)
+                {
+                    sb.append(",");
+                }
+                sb.append(Joiner.on(", ").skipNulls().join(aliases));
+            }
+        }
+
+        return sb.length() > 0 ? sb.toString() : null;
+    }
+
+    // ========================================================================
+    // Cell Renderers (unchanged from original)
+    // ========================================================================
 
     /**
      * Custom cell renderer for displaying identifiers from an identifier collection

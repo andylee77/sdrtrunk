@@ -27,6 +27,7 @@ import java.awt.event.MouseListener;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JSlider;
@@ -34,6 +35,13 @@ import javax.swing.SwingUtilities;
 
 /**
  * History management panel with controls for managing item histories.
+ *
+ * Includes:
+ * - Filters button to open filter editor
+ * - Pre-Filter checkbox: when enabled, filtered events are dropped before consuming buffer space
+ * - Save checkbox: when enabled, filtered events are written to a CSV log file
+ * - Clear button
+ * - History size slider
  */
 public class HistoryManagementPanel<T> extends JPanel
 {
@@ -42,10 +50,13 @@ public class HistoryManagementPanel<T> extends JPanel
     private FilterEditor<T> mFilterEditor;
     private JButton mClearButton;
     private JButton mFilterButton;
+    private JCheckBox mPreFilterCheckBox;
+    private JCheckBox mSaveCheckBox;
     private JSlider mHistorySlider;
     private JLabel mHistoryTitleLabel;
     private JLabel mHistoryValueLabel;
     private String mFilterEditorTitle;
+    private Runnable mSaveToggleCallback;
 
     /**
      * Constructs an instance
@@ -55,8 +66,10 @@ public class HistoryManagementPanel<T> extends JPanel
     {
         mModel = model;
         mFilterEditorTitle = filterEditorTitle;
-        setLayout(new MigLayout("insets 6 1 5 5", "[]5[]10[]5[]5[][grow]", ""));
+        setLayout(new MigLayout("insets 6 1 5 5", "[]5[]5[]5[]5[]10[]5[]5[][grow]", ""));
         add(getFilterButton());
+        add(getPreFilterCheckBox());
+        add(getSaveCheckBox());
         add(getClearButton());
         add(getHistoryTitleLabel());
         add(getHistorySlider());
@@ -79,6 +92,25 @@ public class HistoryManagementPanel<T> extends JPanel
     }
 
     /**
+     * Sets the callback to invoke when the Save checkbox is toggled.
+     * The callback should handle opening/closing the save file.
+     * @param callback to invoke on save toggle
+     */
+    public void setSaveToggleCallback(Runnable callback)
+    {
+        mSaveToggleCallback = callback;
+    }
+
+    /**
+     * Indicates if the Save checkbox is selected.
+     * @return true if save is enabled
+     */
+    public boolean isSaveSelected()
+    {
+        return getSaveCheckBox().isSelected();
+    }
+
+    /**
      * Overrides the panel method to also set the enabled state for the child controls.
      * @param enabled true if this component should be enabled, false otherwise
      */
@@ -88,6 +120,8 @@ public class HistoryManagementPanel<T> extends JPanel
         super.setEnabled(enabled);
         getClearButton().setEnabled(enabled);
         getFilterButton().setEnabled(enabled);
+        getPreFilterCheckBox().setEnabled(enabled);
+        getSaveCheckBox().setEnabled(enabled);
         getHistoryValueLabel().setEnabled(enabled);
         getHistoryTitleLabel().setEnabled(enabled);
         getHistorySlider().setEnabled(enabled);
@@ -121,6 +155,45 @@ public class HistoryManagementPanel<T> extends JPanel
         }
 
         return mFilterButton;
+    }
+
+    /**
+     * Pre-filter checkbox. When enabled, events that don't pass the filter are dropped entirely
+     * and don't consume buffer space.
+     * @return checkbox
+     */
+    private JCheckBox getPreFilterCheckBox()
+    {
+        if(mPreFilterCheckBox == null)
+        {
+            mPreFilterCheckBox = new JCheckBox("Pre-Filter");
+            mPreFilterCheckBox.setToolTipText("When enabled, filtered-out events are dropped and don't consume buffer space");
+            mPreFilterCheckBox.addActionListener(e -> mModel.setPreFilterEnabled(mPreFilterCheckBox.isSelected()));
+        }
+
+        return mPreFilterCheckBox;
+    }
+
+    /**
+     * Save checkbox. When enabled, events that pass the filter are written to a CSV file.
+     * @return checkbox
+     */
+    private JCheckBox getSaveCheckBox()
+    {
+        if(mSaveCheckBox == null)
+        {
+            mSaveCheckBox = new JCheckBox("Save");
+            mSaveCheckBox.setToolTipText("When enabled, filtered events are saved to a CSV file in the event logs directory");
+            mSaveCheckBox.addActionListener(e -> {
+                mModel.setSaveEnabled(mSaveCheckBox.isSelected());
+                if(mSaveToggleCallback != null)
+                {
+                    mSaveToggleCallback.run();
+                }
+            });
+        }
+
+        return mSaveCheckBox;
     }
 
     /**
