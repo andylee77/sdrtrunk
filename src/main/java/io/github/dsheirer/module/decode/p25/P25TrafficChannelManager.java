@@ -181,8 +181,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * Checks if the identifier collection represents an unmonitored call based on alias configuration.
      * A call is considered unmonitored if:
      * - The TO talkgroup has no alias defined, OR
-     * - The alias has Do Not Monitor priority, OR
-     * - The alias has no recording AND no streaming configured
+     * - ALL aliases have Do Not Monitor priority AND none are recordable or streamable
+     *
+     * A call is considered monitored (returns false) if:
+     * - Any alias has a normal playback priority (not Do Not Monitor) — user wants audio
+     * - Any alias is recordable or streamable — even if muted, needs a traffic channel
      *
      * @param ic identifier collection to check
      * @return true if the call should be considered unmonitored
@@ -210,20 +213,20 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         for(Alias alias : aliases)
         {
-            //If any alias has Do Not Monitor priority, it's unmonitored
-            if(alias.getPlaybackPriority() == Priority.DO_NOT_MONITOR)
+            //If the alias is NOT Do Not Monitor, the user wants to hear it — it's monitored
+            if(alias.getPlaybackPriority() != Priority.DO_NOT_MONITOR)
             {
-                return true;
+                return false;
             }
 
-            //If any alias is recordable or streamable, it IS monitored
+            //Alias IS Do Not Monitor, but if it's recordable or streamable, still need a traffic channel
             if(alias.isRecordable() || alias.isStreamable())
             {
                 return false;
             }
         }
 
-        //All aliases exist but none are recordable or streamable
+        //All aliases are Do Not Monitor with no recording/streaming — unmonitored
         return true;
     }
 
