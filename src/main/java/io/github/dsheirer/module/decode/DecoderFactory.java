@@ -188,9 +188,17 @@ public class DecoderFactory
                 processPassport(channel, modules, aliasList, decodeConfig);
                 break;
             case P25_PHASE1:
+                if(trafficChannelManager instanceof P25TrafficChannelManager p25tcm)
+                {
+                    p25tcm.setAliasList(aliasList);
+                }
                 processP25Phase1(channel, userPreferences, modules, aliasList, trafficChannelManager, channelDescriptor);
                 break;
             case P25_PHASE2:
+                if(trafficChannelManager instanceof P25TrafficChannelManager p25tcm2)
+                {
+                    p25tcm2.setAliasList(aliasList);
+                }
                 processP25Phase2(channel, userPreferences, modules, aliasList, trafficChannelManager, channelDescriptor);
                 break;
             default:
@@ -221,6 +229,7 @@ public class DecoderFactory
         if(channel.getChannelType() == ChannelType.STANDARD)
         {
             p25TrafficChannelManager = new P25TrafficChannelManager(channel);
+            p25TrafficChannelManager.setAliasList(aliasList);
         }
         else if(trafficChannelManager instanceof P25TrafficChannelManager p25)
         {
@@ -229,6 +238,7 @@ public class DecoderFactory
         else
         {
             p25TrafficChannelManager = new P25TrafficChannelManager(channel);
+            p25TrafficChannelManager.setAliasList(aliasList);
         }
 
         //Only add traffic channel manager to the modules if this is the control channel
@@ -288,6 +298,7 @@ public class DecoderFactory
         if(channel.getChannelType() == ChannelType.STANDARD)
         {
             P25TrafficChannelManager primaryTCM = new P25TrafficChannelManager(channel);
+            primaryTCM.setAliasList(aliasList);
             modules.add(primaryTCM);
             modules.add(new P25P1DecoderState(channel, primaryTCM));
         }

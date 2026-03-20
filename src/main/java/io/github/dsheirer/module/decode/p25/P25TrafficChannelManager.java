@@ -18,6 +18,9 @@
  */
 package io.github.dsheirer.module.decode.p25;
 
+import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
@@ -124,6 +127,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private Listener<IMessage> mMessageListener;
     private boolean mIgnoreDataCalls;
     private boolean mIgnoreEncryptedCalls;
+    private boolean mIgnoreUnmonitoredCalls;
+    private AliasList mAliasList;
     //Used only for data calls
     private DecodeEventDuplicateDetector mDuplicateDetector = new DecodeEventDuplicateDetector();
     private TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
@@ -140,6 +145,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             mIgnoreDataCalls = phase1.getIgnoreDataCalls();
             mIgnoreEncryptedCalls = phase1.getIgnoreEncryptedCalls();
+            mIgnoreUnmonitoredCalls = phase1.getIgnoreUnmonitoredCalls();
             createPhase1TrafficChannels(phase1.getTrafficChannelPoolSize(), phase1);
             createPhase2TrafficChannels(phase1.getTrafficChannelPoolSize(), new DecodeConfigP25Phase2());
         }
@@ -147,6 +153,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             mIgnoreDataCalls = phase2.getIgnoreDataCalls();
             mIgnoreEncryptedCalls = phase2.getIgnoreEncryptedCalls();
+            mIgnoreUnmonitoredCalls = phase2.getIgnoreUnmonitoredCalls();
             createPhase1TrafficChannels(phase2.getTrafficChannelPoolSize(), new DecodeConfigP25Phase1());
             createPhase2TrafficChannels(phase2.getTrafficChannelPoolSize(), phase2);
         }
@@ -159,6 +166,65 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     public TalkerAliasManager getTalkerAliasManager()
     {
         return mTalkerAliasManager;
+    }
+
+    /**
+     * Sets the alias list for use with the ignore unmonitored calls feature.
+     * @param aliasList to use for talkgroup alias lookups
+     */
+    public void setAliasList(AliasList aliasList)
+    {
+        mAliasList = aliasList;
+    }
+
+    /**
+     * Checks if the identifier collection represents an unmonitored call based on alias configuration.
+     * A call is considered unmonitored if:
+     * - The TO talkgroup has no alias defined, OR
+     * - The alias has Do Not Monitor priority, OR
+     * - The alias has no recording AND no streaming configured
+     *
+     * @param ic identifier collection to check
+     * @return true if the call should be considered unmonitored
+     */
+    private boolean isUnmonitored(IdentifierCollection ic)
+    {
+        if(mAliasList == null || ic == null)
+        {
+            return false;
+        }
+
+        Identifier toIdentifier = ic.getToIdentifier();
+
+        if(toIdentifier == null)
+        {
+            return true; //No talkgroup = unmonitored
+        }
+
+        List<Alias> aliases = mAliasList.getAliases(toIdentifier);
+
+        if(aliases.isEmpty())
+        {
+            return true; //No alias defined for this talkgroup
+        }
+
+        for(Alias alias : aliases)
+        {
+            //If any alias has Do Not Monitor priority, it's unmonitored
+            if(alias.getPlaybackPriority() == Priority.DO_NOT_MONITOR)
+            {
+                return true;
+            }
+
+            //If any alias is recordable or streamable, it IS monitored
+            if(alias.isRecordable() || alias.isStreamable())
+            {
+                return false;
+            }
+        }
+
+        //All aliases exist but none are recordable or streamable
+        return true;
     }
 
     /**
@@ -1228,6 +1294,14 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 return;
             }
 
+            //If we're ignoring unmonitored calls, just update duration and don't allocate a traffic channel
+            if(mIgnoreUnmonitoredCalls && isUnmonitored(ic))
+            {
+                tracker.updateDurationControl(timestamp);
+                broadcast(tracker);
+                return;
+            }
+
             Identifier from = ic.getFromIdentifier();
 
             if(from != null && tracker.isDifferentTalker(from))
@@ -1314,6 +1388,23 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             return;
         }
 
+        if(mIgnoreUnmonitoredCalls && isUnmonitored(ic))
+        {
+            if(tracker == null)
+            {
+                P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
+                        .channelDescriptor(apco25Channel)
+                        .details("IGNORED: UNMONITORED CALL " + (serviceOptions != null ? serviceOptions : ""))
+                        .identifiers(ic)
+                        .build();
+                tracker = new P25TrafficChannelEventTracker(event);
+                addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
+                broadcast(tracker);
+            }
+
+            return;
+        }
+
         String details = isDataChannelGrant ? "PHASE 1 DATA CHANNEL GRANT " : "PHASE 1 CHANNEL GRANT " +
                 (serviceOptions != null ? serviceOptions : "");
 
@@ -1374,6 +1465,14 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             //If we're ignoring encrypted calls, just update duration and don't allocate a traffic channel
             if(mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted())
+            {
+                tracker.updateDurationControl(timestamp);
+                broadcast(tracker);
+                return;
+            }
+
+            //If we're ignoring unmonitored calls, just update duration and don't allocate a traffic channel
+            if(mIgnoreUnmonitoredCalls && isUnmonitored(ic))
             {
                 tracker.updateDurationControl(timestamp);
                 broadcast(tracker);
@@ -1443,6 +1542,21 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
                 .channelDescriptor(apco25Channel)
                 .details("IGNORED: ENCRYPTED CALL " + (serviceOptions != null ? serviceOptions : ""))
+                .identifiers(ic)
+                .timeslot(apco25Channel.getTimeslot())
+                .build();
+
+            tracker = new P25TrafficChannelEventTracker(event);
+            addTracker(tracker, frequency, timeslot);
+            broadcast(tracker);
+            return;
+        }
+
+        if(mIgnoreUnmonitoredCalls && isUnmonitored(ic) && tracker == null)
+        {
+            P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
+                .channelDescriptor(apco25Channel)
+                .details("IGNORED: UNMONITORED CALL " + (serviceOptions != null ? serviceOptions : ""))
                 .identifiers(ic)
                 .timeslot(apco25Channel.getTimeslot())
                 .build();

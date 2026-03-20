@@ -71,6 +71,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
     private RecordConfigurationEditor mRecordConfigurationEditor;
     private ToggleSwitch mIgnoreDataCallsButton;
     private ToggleSwitch mIgnoreEncryptedCallsButton;
+    private ToggleSwitch mIgnoreUnmonitoredCallsButton;
     private Spinner<Integer> mTrafficChannelPoolSizeSpinner;
     private SegmentedButton mModulationSegmentedButton;
     private ToggleButton mC4FMToggleButton;
@@ -154,8 +155,20 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
             GridPane.setConstraints(encryptedCallsLabel, 7, 0);
             gridPane.getChildren().add(encryptedCallsLabel);
 
+            GridPane.setConstraints(getIgnoreUnmonitoredCallsButton(), 0, 1);
+            gridPane.getChildren().add(getIgnoreUnmonitoredCallsButton());
+
+            Label unmonitoredCallsLabel = new Label("Ignore Unmonitored Calls");
+            GridPane.setHalignment(unmonitoredCallsLabel, HPos.LEFT);
+            GridPane.setConstraints(unmonitoredCallsLabel, 1, 1);
+            gridPane.getChildren().add(unmonitoredCallsLabel);
+
+            Label unmonitoredHelpLabel = new Label("(skips talkgroups with no alias, Do Not Monitor priority, or no recording/streaming)");
+            GridPane.setConstraints(unmonitoredHelpLabel, 2, 1, 6, 1);
+            gridPane.getChildren().add(unmonitoredHelpLabel);
+
             Label modulationHelpLabel = new Label("C4FM: repeaters and non-simulcast trunked systems.  LSM: simulcast trunked systems.");
-            GridPane.setConstraints(modulationHelpLabel, 0, 1, 8, 1);
+            GridPane.setConstraints(modulationHelpLabel, 0, 2, 8, 1);
             gridPane.getChildren().add(modulationHelpLabel);
 
             mDecoderPane.setContent(gridPane);
@@ -305,6 +318,19 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
         return mIgnoreEncryptedCallsButton;
     }
 
+    private ToggleSwitch getIgnoreUnmonitoredCallsButton()
+    {
+        if(mIgnoreUnmonitoredCallsButton == null)
+        {
+            mIgnoreUnmonitoredCallsButton = new ToggleSwitch();
+            mIgnoreUnmonitoredCallsButton.setDisable(true);
+            mIgnoreUnmonitoredCallsButton.selectedProperty()
+                .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mIgnoreUnmonitoredCallsButton;
+    }
+
     private Spinner<Integer> getTrafficChannelPoolSizeSpinner()
     {
         if(mTrafficChannelPoolSizeSpinner == null)
@@ -348,6 +374,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
     {
         getIgnoreDataCallsButton().setDisable(config == null);
         getIgnoreEncryptedCallsButton().setDisable(config == null);
+        getIgnoreUnmonitoredCallsButton().setDisable(config == null);
         getTrafficChannelPoolSizeSpinner().setDisable(config == null);
 
         if(config instanceof DecodeConfigP25Phase1)
@@ -355,6 +382,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
             DecodeConfigP25Phase1 decodeConfig = (DecodeConfigP25Phase1)config;
             getIgnoreDataCallsButton().setSelected(decodeConfig.getIgnoreDataCalls());
             getIgnoreEncryptedCallsButton().setSelected(decodeConfig.getIgnoreEncryptedCalls());
+            getIgnoreUnmonitoredCallsButton().setSelected(decodeConfig.getIgnoreUnmonitoredCalls());
             getTrafficChannelPoolSizeSpinner().getValueFactory().setValue(decodeConfig.getTrafficChannelPoolSize());
             if(decodeConfig.getModulation() == Modulation.C4FM)
             {
@@ -371,6 +399,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
         {
             getIgnoreDataCallsButton().setSelected(false);
             getIgnoreEncryptedCallsButton().setSelected(false);
+            getIgnoreUnmonitoredCallsButton().setSelected(false);
             getTrafficChannelPoolSizeSpinner().getValueFactory().setValue(0);
         }
     }
@@ -391,6 +420,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
 
         config.setIgnoreDataCalls(getIgnoreDataCallsButton().isSelected());
         config.setIgnoreEncryptedCalls(getIgnoreEncryptedCallsButton().isSelected());
+        config.setIgnoreUnmonitoredCalls(getIgnoreUnmonitoredCallsButton().isSelected());
         config.setTrafficChannelPoolSize(getTrafficChannelPoolSizeSpinner().getValue());
         config.setModulation(getC4FMToggleButton().isSelected() ? Modulation.C4FM : Modulation.CQPSK);
         getItem().setDecodeConfiguration(config);

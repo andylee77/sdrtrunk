@@ -117,29 +117,34 @@ Explicitly not bringing these in.
 
 **Investigation notes (2026-03-09):** The modified source contains +638/-33 lines of P25 changes across
 14 files. User reports that decoding works noticeably better on the modified build (using heterodyne
-channelizer), but still sees CRC errors. Key observations:
+channelizer), but still sees CRC errors with weak signal. With better signal, decoding works OK.
 
-- **P25P1MessageFramer.java (+86 lines)** is the **#1 priority** for CRC error investigation. The framer
-  handles sync detection and frame alignment — if frames aren't properly aligned before CRC checking,
-  every frame will fail CRC. The +86 lines of changes likely contain improved sync recovery, better
-  handling of frame boundary detection, and possibly tolerance for bit errors in sync words.
+**CRC Investigation Results (2026-03-09):** Completed full diff analysis of the 4 priority files
+(MessageFramer, DecoderLSM, MessageAssembler, DecoderC4FM) plus DemodulatorLSM. **Key finding:
+NONE of these files contain functional changes that would affect CRC errors or decoding quality.**
 
-- **P25P1AudioModule.java (+372 lines)** has the largest change — likely improved voice frame handling
-  and back-to-back transmission continuity. This wouldn't directly affect CRC errors but would improve
-  overall audio quality once frames are decoded.
+- **P25P1MessageFramer.java (+86 lines):** All +86 lines are **debug logging only** in `checkNID()`.
+  Adds SLF4J Logger + `JsonActivityRecorder` NID debug tracing (raw NID dibits, pre/post-BCH NAC,
+  DUID, corrected bit counts, NAC mismatch warnings). Zero changes to sync detection, frame alignment,
+  NID buffer handling, status symbol stripping, or any framing logic. **Dependency issue:**
+  Uses `JsonActivityRecorder` (item 3.6.1) which doesn't exist in our repo.
 
-- **P25TrafficChannelManager.java (+100 lines)** — better traffic channel tracking/handoff, fewer missed
-  transmissions during channel switches.
+- **P25P1DecoderLSM.java (+10/-10):** Logger variable rename only (`LOGGER` → `mLog`). No functional changes.
 
-- **Heterodyne vs Polyphase:** User reports heterodyne channelizer decodes better than polyphase for P25.
-  Likely because heterodyne gives a cleaner, more direct signal path for a single channel — the polyphase
-  filter bank can introduce transition-band artifacts at channel edges that affect symbol timing.
+- **P25P1MessageAssembler.java (+4/-4):** Logger variable rename only (`LOGGER` → `mLog`). No functional changes.
 
-**Recommended investigation order for CRC errors:**
-1. Start with `P25P1MessageFramer.java` — diff the changes, understand sync detection improvements
-2. Then `P25P1DecoderLSM.java` (+10 lines) — LSM is the heterodyne decoder path
-3. Then `P25P1MessageAssembler.java` (+4 lines) — message assembly changes
-4. Then `P25P1DecoderC4FM.java` (+8 lines) — C4FM decoder path changes (may cross-apply to LSM)
+- **P25P1DecoderC4FM.java (+8/-8):** Logger variable rename only (`LOGGER` → `mLog`). No functional changes.
+
+- **P25P1DemodulatorLSM.java (+3):** Added unused Logger field. Dead code, no functional changes.
+
+**If CRC errors recur, investigate these files next (not yet diffed):**
+1. `edac/bch/BCH_63_16_23_P25.java` (item 3.7.5) — BCH decoder used by framer's `checkNID()`
+2. `dsp/psk/demod/DifferentialDemodulator*.java` (items 3.5.1–3.5.4) — symbol quality affects sync/NID
+3. `bits/BinaryMessage.java` (item 3.7.1) — could affect CRC calculation mechanics
+4. Polyphase channelizer artifacts at channel edges may be the real cause (signal path issue, not code)
+
+**Current status:** CRC errors appear to be signal-quality related rather than a code bug. Working OK
+with adequate signal strength. Investigation paused — revisit if CRC issues persist with good signal.
 
 | # | File | Change Size | Description | Status |
 |---|------|-------------|-------------|--------|
@@ -147,12 +152,12 @@ channelizer), but still sees CRC errors. Key observations:
 | 3.2.2 | `module/decode/p25/P25TrafficChannelManager.java` | +100 | Traffic channel management improvements | ☐ Deferred |
 | 3.2.3 | `module/decode/p25/audio/P25P1AudioModule.java` | +372 | Major audio module rewrite | ☐ Deferred |
 | 3.2.4 | `module/decode/p25/phase1/DecodeConfigP25.java` | +12 | New configuration options | ☐ Deferred |
-| 3.2.5 | `module/decode/p25/phase1/P25P1DecoderC4FM.java` | +8/-8 | C4FM decoder tweaks | ☐ Deferred |
-| 3.2.6 | `module/decode/p25/phase1/P25P1DecoderLSM.java` | +10/-10 | LSM (heterodyne) decoder changes | ☐ Deferred |
+| 3.2.5 | `module/decode/p25/phase1/P25P1DecoderC4FM.java` | +8/-8 | Logger rename only (LOGGER→mLog) | ☑ Investigated — cosmetic only |
+| 3.2.6 | `module/decode/p25/phase1/P25P1DecoderLSM.java` | +10/-10 | Logger rename only (LOGGER→mLog) | ☑ Investigated — cosmetic only |
 | 3.2.7 | `module/decode/p25/phase1/P25P1DecoderState.java` | +6/-6 | Decoder state changes | ☐ Deferred |
-| 3.2.8 | `module/decode/p25/phase1/P25P1DemodulatorLSM.java` | +3 | LSM demodulator addition | ☐ Deferred |
-| 3.2.9 | `module/decode/p25/phase1/P25P1MessageAssembler.java` | +4/-4 | Message assembly improvements | ☐ Deferred |
-| 3.2.10 | `module/decode/p25/phase1/P25P1MessageFramer.java` | +86 | **🔍 CRC INVESTIGATION START HERE** — sync detection / frame alignment | ☐ Deferred |
+| 3.2.8 | `module/decode/p25/phase1/P25P1DemodulatorLSM.java` | +3 | Added unused Logger field (dead code) | ☑ Investigated — no functional change |
+| 3.2.9 | `module/decode/p25/phase1/P25P1MessageAssembler.java` | +4/-4 | Logger rename only (LOGGER→mLog) | ☑ Investigated — cosmetic only |
+| 3.2.10 | `module/decode/p25/phase1/P25P1MessageFramer.java` | +86 | Debug logging in checkNID() only — no framing changes. Needs JsonActivityRecorder (3.6.1) | ☑ Investigated — diagnostic only |
 | 3.2.11 | `module/decode/p25/phase1/message/lc/LinkControlOpcode.java` | +2/-2 | Opcode enum change | ☐ Deferred |
 | 3.2.12 | `module/decode/p25/phase1/message/ldu/LDU1Message.java` | +56 | Additional LDU1 voice frame parsing | ☐ Deferred |
 | 3.2.13 | `module/decode/p25/phase2/P25P2DecoderState.java` | +4/-4 | Phase 2 decoder state changes | ☐ Deferred |
@@ -273,3 +278,14 @@ git diff --no-index "c:\Users\Andy\Projects\SDRTrunk\sdrtrunk\src\main\java\io\g
 | **Total** | **19** | **62** | **81** | |
 
 **Phase 1+2 scope:** 27 items to review (22 PlutoSDR + 5 Waterfall/Spectrum)
+
+---
+
+## Future Development (New Features)
+
+Items not from the migration source — new feature ideas for the fork.
+
+| # | Feature | Description | Priority | Status |
+|---|---------|-------------|----------|--------|
+| F.1 | Auto-Add Detected Talkgroup Aliases | When the decoder sees a talkgroup that has no alias defined, automatically create a stub alias entry in the alias list with the talkgroup ID. This would allow the user to later fill in names, set recording/streaming, adjust priority, etc. without having to manually discover and enter every talkgroup number. Could be an option on the channel config ("Auto-populate aliases") or a button in the alias editor ("Import detected talkgroups"). Scope: collect seen talkgroups from decode events, present in UI or auto-add to alias model. | ❓ Future | ☐ Not started |
+| F.2 | Ignore Unmonitored Calls enhancement | Consider adding finer-grained control: separate checkboxes for "ignore no-alias", "ignore Do Not Monitor", "ignore no-record/stream" instead of the single combined option. | ❓ Future | ☐ Not started |

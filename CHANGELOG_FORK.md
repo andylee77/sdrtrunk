@@ -121,6 +121,26 @@ Extensive work documents accumulated in `C:\Users\Andy\Projects\SDRTrunk\work_do
 
 ---
 
+## [2026-03-20] Change 005: Ignore Unmonitored Calls Option
+
+### Modified Files (5)
+- `module/decode/p25/phase1/DecodeConfigP25.java` — Added `mIgnoreUnmonitoredCalls` boolean field with Jackson XML serialization, getter, and setter
+- `gui/playlist/channel/P25P1ConfigurationEditor.java` — Added "Ignore Unmonitored Calls" ToggleSwitch to the P25 Phase 1 decoder panel, with load/save support
+- `gui/playlist/channel/P25P2ConfigurationEditor.java` — Added "Ignore Unmonitored Calls" ToggleSwitch to the P25 Phase 2 decoder panel, with load/save support
+- `module/decode/p25/P25TrafficChannelManager.java` — Added `mIgnoreUnmonitoredCalls` field, `AliasList` field with setter, `isUnmonitored()` helper method; filters unmonitored grants in both Phase 1 and Phase 2 grant methods (same-call and new-call paths)
+- `module/decode/DecoderFactory.java` — Wired `AliasList` to `P25TrafficChannelManager` via `setAliasList()` at all P25 creation points
+
+### Behavior
+- When enabled, calls to talkgroups that are "unmonitored" (no alias, Do Not Monitor priority, or no recording/streaming configured) are logged as "IGNORED: UNMONITORED CALL" but do not consume a traffic channel slot
+- Setting persisted in playlist XML as `ignore_unmonitored_calls` attribute on the decode configuration element
+- Works for both P25 Phase 1 and Phase 2 channel grants, including same-call continuation paths
+- Significantly reduces wasted tuner resources on busy systems where only specific talkgroups are of interest
+
+### Documentation
+- `doc/changes/005_ignore_unmonitored_calls.md` — Detailed change doc
+
+---
+
 ## Pending / Future
 
 - [ ] Finalize PlutoSDR tuner integration with Maia IQ streaming
