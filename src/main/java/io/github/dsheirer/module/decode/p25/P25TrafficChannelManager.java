@@ -64,6 +64,7 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
 import io.github.dsheirer.module.decode.p25.reference.DataServiceOptions;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
+import io.github.dsheirer.module.decode.p25.session.P25CallSessionManager;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.config.SourceConfigTuner;
@@ -132,6 +133,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     //Used only for data calls
     private DecodeEventDuplicateDetector mDuplicateDetector = new DecodeEventDuplicateDetector();
     private TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
+    private P25CallSessionManager mCallSessionManager;
 
     /**
      * Constructs an instance.
@@ -157,6 +159,17 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             createPhase1TrafficChannels(phase2.getTrafficChannelPoolSize(), new DecodeConfigP25Phase1());
             createPhase2TrafficChannels(phase2.getTrafficChannelPoolSize(), phase2);
         }
+
+        mCallSessionManager = new P25CallSessionManager();
+    }
+
+    /**
+     * Returns the call session manager for building unified call session objects.
+     * @return call session manager
+     */
+    public P25CallSessionManager getCallSessionManager()
+    {
+        return mCallSessionManager;
     }
 
     /**
@@ -360,6 +373,12 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             }
 
             mDecodeEventListener.receive(decodeEvent);
+        }
+
+        // Feed to call session manager for unified call session tracking
+        if(mCallSessionManager != null)
+        {
+            mCallSessionManager.onDecodeEvent(decodeEvent, System.currentTimeMillis());
         }
     }
 
@@ -1798,11 +1817,20 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     @Override
     public void start()
     {
+        if(mCallSessionManager != null)
+        {
+            mCallSessionManager.start();
+        }
     }
 
     @Override
     public void stop()
     {
+        if(mCallSessionManager != null)
+        {
+            mCallSessionManager.stop();
+        }
+
         List<Channel> channels = new ArrayList<>(mAllocatedTrafficChannelMap.values());
 
         //Issue a disable request for each traffic channel
