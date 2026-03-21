@@ -571,11 +571,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             P25TrafficChannelEventTracker tracker = getTracker(frequency, timeslot);
 
-            //If we have a tracker that we can mark complete, broadcast the updated tracker/event.
+            //If we have a tracker that we can mark complete, update it.
+            //Phase 4: no longer broadcast tracker -- CSM handles Events tab via cached control events.
             if(tracker != null && tracker.completeTraffic(timestamp))
             {
                 completed = true;
-                broadcast(tracker);
             }
         }
         finally
@@ -612,11 +612,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             P25TrafficChannelEventTracker tracker = getTracker(frequency, timeslot);
 
-            //If we have a tracker that is started that we can mark complete, broadcast the updated tracker/event.
+            //If we have a tracker that is started that we can mark complete, update it.
+            //Phase 4: no longer broadcast tracker -- CSM handles Events tab via cached control events.
             if(tracker != null && tracker.isStarted() && tracker.completeTraffic(timestamp))
             {
                 completed = true;
-                broadcast(tracker);
             }
         }
         finally
@@ -665,7 +665,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 tracker.addIdentifierIfMissing(identifier);
                 tracker.updateDurationTraffic(timestamp);
-                broadcast(tracker);
+                //Phase 4: no longer broadcast tracker -- CSM handles Events tab.
 
                 // Forward to call session manager
                 if(mCallSessionManager != null)
@@ -798,7 +798,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             if(tracker != null)
             {
                 tracker.updateDurationTraffic(timestamp);
-                broadcast(tracker);
+                //Phase 4: no longer broadcast tracker -- CSM handles Events tab.
 
                 // Forward to call session manager
                 if(mCallSessionManager != null)
@@ -850,7 +850,14 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
                 tracker.addDetailsIfMissing(additionalDetails);
                 tracker.addChannelDescriptorIfMissing(channelDescriptor);
-                broadcast(tracker);
+                //Phase 4: no longer broadcast tracker -- CSM handles Events tab.
+
+                // Forward to call session manager
+                if(mCallSessionManager != null)
+                {
+                    mCallSessionManager.onTrafficChannelUpdate(frequency, timeslot,
+                            tracker.getEvent().getIdentifierCollection(), timestamp);
+                }
                 return tracker.getEvent().getChannelDescriptor();
             }
 
@@ -865,7 +872,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             tracker = new P25TrafficChannelEventTracker(callEvent);
             addTracker(tracker, frequency, timeslot);
-            broadcast(tracker);
+            //Phase 4: no longer broadcast tracker -- CSM handles Events tab.
+
+            // Forward to call session manager
+            if(mCallSessionManager != null)
+            {
+                mCallSessionManager.onTrafficChannelUpdate(frequency, timeslot, ic, timestamp);
+            }
             return null;
         }
         finally
@@ -1013,7 +1026,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
             }
 
-            broadcast(tracker);
+            //Phase 4: no longer broadcast tracker -- CSM handles Events tab.
 
             // Forward to call session manager
             if(mCallSessionManager != null && tracker != null)
@@ -1090,7 +1103,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 }
 
                 tracker.updateDurationTraffic(timestamp);
-                broadcast(tracker);
+                //Phase 4: no longer broadcast tracker -- CSM handles Events tab.
 
                 // Forward to call session manager
                 if(mCallSessionManager != null)
@@ -1149,7 +1162,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 }
 
                 tracker.updateDurationTraffic(timestamp);
-                broadcast(tracker);
+                //Phase 4: no longer broadcast tracker -- CSM handles Events tab.
 
                 // Forward to call session manager
                 if(mCallSessionManager != null)
@@ -1178,7 +1191,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
                     tracker = new P25TrafficChannelEventTracker(callEvent);
                     addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
-                    broadcast(tracker);
+                    //Phase 4: no longer broadcast tracker -- CSM handles Events tab.
 
                     // Forward to call session manager
                     if(mCallSessionManager != null)
@@ -1229,7 +1242,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
                 tracker.updateDurationTraffic(timestamp);
                 tracker.addDetailsIfMissing(additionalDetails);
-                broadcast(tracker);
+                //Phase 4: no longer broadcast tracker -- CSM handles Events tab.
 
                 // Forward to call session manager
                 if(mCallSessionManager != null)
@@ -1250,7 +1263,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             tracker = new P25TrafficChannelEventTracker(callEvent);
             addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
-            broadcast(tracker);
+            //Phase 4: no longer broadcast tracker -- CSM handles Events tab.
 
             // Forward to call session manager
             if(mCallSessionManager != null)
@@ -1327,11 +1340,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             P25TrafficChannelEventTracker tracker = getTracker(frequency, P25P1Message.TIMESLOT_1);
 
-            //If we have a tracker that we can mark complete, broadcast the updated tracker/event.
+            //If we have a tracker that we can mark complete, update it.
+            //Phase 4: no longer broadcast tracker -- CSM handles Events tab via cached control events.
             if(tracker != null && tracker.isStarted() && tracker.completeTraffic(timestamp))
             {
                 completed = true;
-                broadcast(tracker);
             }
         }
         finally

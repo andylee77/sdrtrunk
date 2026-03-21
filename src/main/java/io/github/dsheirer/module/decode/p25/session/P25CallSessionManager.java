@@ -933,6 +933,11 @@ public class P25CallSessionManager
                 }
                 notifyEventUpdated(session, currentEvent);
             }
+
+            // Phase 4: Always re-broadcast the cached control event to the Events tab.
+            // Since TCM no longer broadcasts traffic-side events, CSM must update the
+            // Events tab with duration, identifiers, and any other traffic-channel info.
+            broadcastTrafficUpdate(frequency, timeslot, ic, timestamp);
         }
         catch(Exception e)
         {
@@ -1038,6 +1043,43 @@ public class P25CallSessionManager
     // ========================================================================
     // Phase 3: Shared Logic (moved from P25TrafficChannelManager)
     // ========================================================================
+
+    /**
+     * Phase 4: Re-broadcasts the cached control event to the Events tab with updated info
+     * from traffic channel messages (duration, identifiers, encryption).
+     *
+     * Since TCM no longer broadcasts traffic-side events directly, this method ensures the
+     * Events tab stays current with traffic channel activity. The cached control event
+     * (created by broadcastControlGrantEvent during the initial grant) is updated in-place
+     * and re-broadcast, preserving ClearableHistoryModel object identity for in-row updates.
+     */
+    private void broadcastTrafficUpdate(long frequency, int timeslot, IdentifierCollection ic, long timestamp)
+    {
+        if(mDecodeEventListener == null)
+        {
+            return;
+        }
+
+        // Try the exact key first, then fallback for Phase 1 (timeslot mismatch: control=0, traffic=1)
+        String eventKey = frequency + ":" + timeslot;
+        P25ChannelGrantEvent existing = mActiveControlEvents.get(eventKey);
+        if(existing == null && timeslot != 0)
+        {
+            eventKey = frequency + ":0";
+            existing = mActiveControlEvents.get(eventKey);
+        }
+
+        if(existing != null)
+        {
+            existing.setDuration(timestamp - existing.getTimeStart());
+            if(ic != null)
+            {
+                existing.setIdentifierCollection(ic);
+            }
+            mDecodeEventListener.receive(existing);
+        }
+    }
+
 
     /**
      * Creates a call event type description for the specified opcode and service options.
