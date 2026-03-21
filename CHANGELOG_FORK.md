@@ -252,6 +252,22 @@ Extensive work documents accumulated in `C:\Users\Andy\Projects\SDRTrunk\work_do
 
 ---
 
+## [2026-03-21] Change 012: Traffic Channel Fixes (In Progress)
+
+### Modified Files (1)
+- `module/decode/p25/P25TrafficChannelManager.java` -- Added `releaseTrafficChannel(long frequency)` stub method for CSM patch-call consolidation
+
+### Context
+- P25CallSessionManager's patch-call duplicate detection calls `releaseTrafficChannel()` to deallocate duplicate traffic channels when same radio ID is granted to different talk groups (implicit patch detection for Motorola LSM systems)
+- Method is currently a stub (logs only); full channel deallocation is TODO
+- Future work: implement actual channel pool release, audio routing consolidation for patched calls, and handling of traffic events that corrupt control channel identifier collections
+
+### Documentation
+- `doc/changes/012_traffic_channel_fixes.md` -- Detailed change doc
+- `doc/design/012_traffic_channel_architecture_analysis.md` -- Architecture analysis
+
+---
+
 ## Pending / Future
 
 - [ ] Finalize PlutoSDR tuner integration with Maia IQ streaming

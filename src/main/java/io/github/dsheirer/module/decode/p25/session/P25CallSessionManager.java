@@ -295,8 +295,31 @@ public class P25CallSessionManager
                 }
             }
 
-            // No matching session or different call — treat as a new grant
-            processChannelGrant(apco25Channel, serviceOptions, ic, opcode, timestamp, context);
+            // No matching session or different call.
+            // If a traffic channel is already allocated for this frequency, just update
+            // the cached Events tab event duration — don't create a new grant/session.
+            // This mirrors the processP2ChannelUpdate pattern and prevents the CSM from
+            // endlessly re-creating sessions that keep the traffic channel alive forever.
+            if(mTrafficChannelManager != null && mTrafficChannelManager.isTrafficChannelAllocated(frequency))
+            {
+                // Traffic channel already running — update cached event duration only
+                String eventKey = frequency + ":" + timeslot;
+                P25ChannelGrantEvent cachedEvent = mActiveControlEvents.get(eventKey);
+                if(cachedEvent == null && timeslot != 0)
+                {
+                    cachedEvent = mActiveControlEvents.get(frequency + ":0");
+                }
+                if(cachedEvent != null && mDecodeEventListener != null)
+                {
+                    cachedEvent.setDuration(timestamp - cachedEvent.getTimeStart());
+                    mDecodeEventListener.receive(cachedEvent);
+                }
+            }
+            else
+            {
+                // No traffic channel allocated — treat as a new grant
+                processChannelGrant(apco25Channel, serviceOptions, ic, opcode, timestamp, context);
+            }
         }
         catch(Exception e)
         {
@@ -1129,6 +1152,14 @@ public class P25CallSessionManager
             existing.setDuration(timestamp - existing.getTimeStart());
             if(ic != null)
             {
+                // For Phase 1 events (found via ":0" fallback), the traffic IC carries
+                // timeslot=1 (P25P1Message.TIMESLOT_1) which would display "TS1" in the
+                // Channel column. Clear the timeslot to keep the display consistent with
+                // the control channel's timeslot=0 (no timeslot shown for P1).
+                if(ic.getTimeslot() != 0 && eventKey.endsWith(":0"))
+                {
+                    ic.setTimeslot(0);
+                }
                 existing.setIdentifierCollection(ic);
             }
             // Mark as TRAFFIC source since this update came from a traffic channel
@@ -1570,18 +1601,11 @@ public class P25CallSessionManager
             }
         }
 
-        // Check 3: Radio affinity — same FROM radio on another frequency within tolerance
-        if(fromRadio != null)
-        {
-            String radioStr = fromRadio.toString();
-            for(CallSession session : mActiveSessions.values())
-            {
-                if(session.isRadioAffiliated(radioStr, timestamp, 5000))
-                {
-                    return session;
-                }
-            }
-        }
+        // Check 3: Radio affinity — DISABLED
+        // Radio affinity matching was too aggressive: on busy systems a radio can legitimately
+        // appear on different talkgroups within seconds. Without system-provided patch group
+        // info (e.g., Motorola LSM systems), this created false "PATCH MEMBER" matches.
+        // Patch detection now relies solely on PatchGroupManager resolution (Checks 1/2).
 
         return null;
     }
@@ -1690,11 +1714,9 @@ public class P25CallSessionManager
                     primary.addSeenTalkgroupById(tgId);
                 }
 
-                // Release the traffic channel for the duplicate's frequency
-                if(mTrafficChannelManager != null)
-                {
-                    mTrafficChannelManager.releaseTrafficChannel(duplicate.getFrequency());
-                }
+                // Traffic channel teardown is delegated to TCM via its normal
+                // state machine (FADE → TEARDOWN → TrafficChannelTeardownMonitor).
+                // CSM does NOT release traffic channels directly.
 
                 // Remove from active sessions and finalize
                 String dupKey = sessionKey(duplicate.getFrequency(), duplicate.getTimeslot());
