@@ -778,7 +778,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 MutableIdentifierCollection ic = getIdentifierCollectionForUsers(mac.getIdentifiers(), message.getTimestamp());
                 //Add the traffic channel to the IC
                 ic.update(cgdp.getChannel());
-                mTrafficChannelManager.processP2ChannelGrant(cgdp.getChannel(), cgdp.getServiceOptions(), ic, mac.getOpcode(),
+                mTrafficChannelManager.getCallSessionManager().processP2ChannelGrant(cgdp.getChannel(), cgdp.getServiceOptions(), ic, mac.getOpcode(),
                         message.getTimestamp(), mac.toString());
             }
         }
@@ -807,7 +807,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     {
                         MutableIdentifierCollection mic = getIdentifierCollectionForUser(cgu.getGroupAddress1(), message.getTimestamp());
                         mic.update(cgu.getChannel1());
-                        mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannel1(), cgu.getServiceOptions1(), mic,
+                        mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannel1(), cgu.getServiceOptions1(), mic,
                                 mac.getOpcode(), message.getTimestamp(), mac.toString());
                     }
 
@@ -819,7 +819,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                         {
                             MutableIdentifierCollection mic2 = getIdentifierCollectionForUser(cgu.getGroupAddress2(), message.getTimestamp());
                             mic2.update(cgu.getChannel1());
-                            mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannel1(), cgu.getServiceOptions2(), mic2,
+                            mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannel1(), cgu.getServiceOptions2(), mic2,
                                     mac.getOpcode(), message.getTimestamp(), mac.toString());
                         }
                     }
@@ -832,7 +832,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                         {
                             MutableIdentifierCollection mic3 = getIdentifierCollectionForUser(cgu.getGroupAddress3(), message.getTimestamp());
                             mic3.update(cgu.getChannel1());
-                            mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannel1(), cgu.getServiceOptions3(), mic3,
+                            mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannel1(), cgu.getServiceOptions3(), mic3,
                                     mac.getOpcode(), message.getTimestamp(), mac.toString());
                         }
                     }
@@ -847,7 +847,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     {
                         MutableIdentifierCollection mic = getIdentifierCollectionForUser(cgu.getGroupAddress1(), message.getTimestamp());
                         mic.update(cgu.getChannel1());
-                        mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannel1(), cgu.getServiceOptions1(), mic,
+                        mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannel1(), cgu.getServiceOptions1(), mic,
                                 mac.getOpcode(), message.getTimestamp(), mac.toString());
                     }
 
@@ -859,7 +859,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                         {
                             MutableIdentifierCollection mic2 = getIdentifierCollectionForUser(cgu.getGroupAddress2(), message.getTimestamp());
                             mic2.update(cgu.getChannel1());
-                            mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannel1(), cgu.getServiceOptions2(), mic2,
+                            mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannel1(), cgu.getServiceOptions2(), mic2,
                                     mac.getOpcode(), message.getTimestamp(), mac.toString());
                         }
                     }
@@ -877,7 +877,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     {
                         MutableIdentifierCollection mic = getIdentifierCollectionForUser(cgu.getGroupAddress1(), message.getTimestamp());
                         mic.update(cgu.getChannel1());
-                        mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannel1(), serviceOptions, mic, mac.getOpcode(),
+                        mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannel1(), serviceOptions, mic, mac.getOpcode(),
                                 message.getTimestamp(), mac.toString());
                     }
 
@@ -889,7 +889,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                         {
                             MutableIdentifierCollection mic2 = getIdentifierCollectionForUser(cgu.getGroupAddress2(), message.getTimestamp());
                             mic2.update(cgu.getChannel1());
-                            mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannel1(), serviceOptions, mic2,
+                            mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannel1(), serviceOptions, mic2,
                                     mac.getOpcode(), message.getTimestamp(), mac.toString());
                         }
                     }
@@ -906,7 +906,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                         VoiceServiceOptions serviceOptions = new VoiceServiceOptions(0);
                         MutableIdentifierCollection mic = getIdentifierCollectionForUsers(cgu.getIdentifiers(), message.getTimestamp());
                         mic.update(cgu.getChannel());
-                        mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannel(), serviceOptions, mic, mac.getOpcode(),
+                        mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannel(), serviceOptions, mic, mac.getOpcode(),
                                 message.getTimestamp(), mac.toString());
                     }
                 }
@@ -922,7 +922,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                         VoiceServiceOptions serviceOptions = new VoiceServiceOptions(0);
                         MutableIdentifierCollection mic = getIdentifierCollectionForUsers(cgu.getIdentifiers(), message.getTimestamp());
                         mic.update(cgu.getChannel());
-                        mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannel(), serviceOptions, mic, mac.getOpcode(),
+                        mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannel(), serviceOptions, mic, mac.getOpcode(),
                                 message.getTimestamp(), mac.toString());
                     }
                 }
@@ -936,7 +936,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     {
                         MutableIdentifierCollection mic = getIdentifierCollectionForUser(cgu.getGroupAddress(), message.getTimestamp());
                         mic.update(cgu.getChannel());
-                        mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannel(), cgu.getServiceOptions(), mic,
+                        mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannel(), cgu.getServiceOptions(), mic,
                                 mac.getOpcode(), message.getTimestamp(), mac.toString());
                     }
                 }
@@ -952,7 +952,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                         VoiceServiceOptions serviceOptions = new VoiceServiceOptions(0);
                         MutableIdentifierCollection mic = getIdentifierCollectionForUsers(cgu.getIdentifiers(), message.getTimestamp());
                         mic.update(cgu.getChannel());
-                        mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannel(), serviceOptions, mic, mac.getOpcode(),
+                        mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannel(), serviceOptions, mic, mac.getOpcode(),
                                 message.getTimestamp(), mac.toString());
                     }
                 }
@@ -966,7 +966,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     {
                         MutableIdentifierCollection mic = getIdentifierCollectionForUsers(cgu.getIdentifiers(), message.getTimestamp());
                         mic.update(cgu.getChannel());
-                        mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannel(), cgu.getServiceOptions(), mic,
+                        mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannel(), cgu.getServiceOptions(), mic,
                                 mac.getOpcode(), message.getTimestamp(), mac.toString());
                     }
                 }
@@ -980,7 +980,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     {
                         MutableIdentifierCollection mic = getIdentifierCollectionForUsers(cgu.getIdentifiers(), message.getTimestamp());
                         mic.update(cgu.getChannel());
-                        mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannel(), cgu.getServiceOptions(), mic,
+                        mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannel(), cgu.getServiceOptions(), mic,
                                 mac.getOpcode(), message.getTimestamp(), mac.toString());
                     }
                 }
@@ -995,7 +995,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     {
                         MutableIdentifierCollection mic = getIdentifierCollectionForUser(cgu.getPatchgroup(), message.getTimestamp());
                         mic.update(cgu.getChannel());
-                        mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannel(), cgu.getServiceOptions(), mic,
+                        mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannel(), cgu.getServiceOptions(), mic,
                                 mac.getOpcode(), message.getTimestamp(), mac.toString());
                     }
                 }
@@ -1013,7 +1013,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     {
                         MutableIdentifierCollection mic = getIdentifierCollectionForUser(cgu.getPatchgroupA(), message.getTimestamp());
                         mic.update(cgu.getChannelA());
-                        mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannelA(), serviceOptions, mic, mac.getOpcode(),
+                        mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannelA(), serviceOptions, mic, mac.getOpcode(),
                                 message.getTimestamp(), mac.toString());
                     }
 
@@ -1026,7 +1026,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                         {
                             MutableIdentifierCollection mic2 = getIdentifierCollectionForUser(cgu.getPatchgroupB(), message.getTimestamp());
                             mic2.update(cgu.getChannelB());
-                            mTrafficChannelManager.processP2ChannelUpdate(cgu.getChannelB(), serviceOptions, mic2,
+                            mTrafficChannelManager.getCallSessionManager().processP2ChannelUpdate(cgu.getChannelB(), serviceOptions, mic2,
                                     mac.getOpcode(), message.getTimestamp(), mac.toString());
                         }
                     }

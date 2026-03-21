@@ -23,6 +23,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
+import io.github.dsheirer.module.decode.session.ChannelSourceType;
 
 /**
  * Represents a single per-talker segment within a call session.
@@ -47,6 +48,9 @@ public class CallSessionEvent
     private String mDetails;
     private long mFrequency;
     private int mTimeslot;
+
+    // Channel source type — indicates if this event originated from control or traffic channel
+    private ChannelSourceType mChannelSourceType = ChannelSourceType.UNKNOWN;
 
     // Future fields — populated by later phases
     private String mRecordingPath;
@@ -213,6 +217,16 @@ public class CallSessionEvent
     public void setTranscript(String transcript)
     {
         mTranscript = transcript;
+    }
+
+    public ChannelSourceType getChannelSourceType()
+    {
+        return mChannelSourceType;
+    }
+
+    public void setChannelSourceType(ChannelSourceType channelSourceType)
+    {
+        mChannelSourceType = channelSourceType;
     }
 
     @Override

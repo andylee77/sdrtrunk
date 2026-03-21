@@ -22,11 +22,13 @@ import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
+import io.github.dsheirer.module.decode.session.ChannelSourceType;
 import io.github.dsheirer.protocol.Protocol;
 
 public class P25ChannelGrantEvent extends P25DecodeEvent
 {
     private ServiceOptions mServiceOptions;
+    private ChannelSourceType mChannelSourceType = ChannelSourceType.UNKNOWN;
 
     public P25ChannelGrantEvent(DecodeEventType decodeEventType, long timestamp)
     {
@@ -69,6 +71,22 @@ public class P25ChannelGrantEvent extends P25DecodeEvent
     }
 
     /**
+     * Channel source type indicating whether this event came from control or traffic channel
+     */
+    public ChannelSourceType getChannelSourceType()
+    {
+        return mChannelSourceType;
+    }
+
+    /**
+     * Sets the channel source type
+     */
+    public void setChannelSourceType(ChannelSourceType channelSourceType)
+    {
+        mChannelSourceType = channelSourceType;
+    }
+
+    /**
      * Builder pattern for constructing decode events.
      */
     public static class P25ChannelGrantDecodeEventBuilder
@@ -81,6 +99,7 @@ public class P25ChannelGrantEvent extends P25DecodeEvent
         protected String mDetails;
         private ServiceOptions mServiceOptions;
         private int mTimeslot = -1;
+        private ChannelSourceType mChannelSourceType;
 
         /**
          * Constructs a builder instance with the specified start time in milliseconds
@@ -156,6 +175,16 @@ public class P25ChannelGrantEvent extends P25DecodeEvent
         }
 
         /**
+         * Sets the channel source type for the event
+         * @param channelSourceType indicating control or traffic origin
+         */
+        public P25ChannelGrantDecodeEventBuilder channelSourceType(ChannelSourceType channelSourceType)
+        {
+            mChannelSourceType = channelSourceType;
+            return this;
+        }
+
+        /**
          * Builds the decode event
          */
         public P25ChannelGrantEvent build()
@@ -168,6 +197,10 @@ public class P25ChannelGrantEvent extends P25DecodeEvent
             decodeEvent.setIdentifierCollection(mIdentifierCollection);
             decodeEvent.setServiceOptions(mServiceOptions);
             decodeEvent.setTimeslot(mTimeslot);
+            if(mChannelSourceType != null)
+            {
+                decodeEvent.setChannelSourceType(mChannelSourceType);
+            }
             return decodeEvent;
         }
     }

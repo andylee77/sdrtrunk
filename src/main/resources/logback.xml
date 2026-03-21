@@ -34,4 +34,7 @@
   <!-- Apache Mina TCP/HTTP library -->
   <logger name="org.apache.mina" level="INFO" />
 
+  <!-- SQLite JDBC driver - suppress verbose SQL statement logging -->
+  <logger name="org.sqlite" level="WARN" />
+
 </configuration>

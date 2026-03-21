@@ -4,13 +4,33 @@
 2026-03-20
 
 ## Status
-Approved — Implementation Starting
+✅ COMPLETE — Implemented 2026-03-20
 
 ## Scope
 - **Phase 1b:** CallSessionModel (Swing TableModel) + CallSessionPanel + NowPlayingPanel "Calls" tab
 - **006a:** SQLite Call Log Database — build.gradle dependency, CallLogDatabase, CallLogRecord, CallEventRecord, CallLogWriter
 
 These are tightly coupled (006a writes the same CallSession objects that the UI displays) and implemented together.
+
+---
+
+## Completion Notes
+
+All steps implemented and verified. Key implementation details beyond the original plan:
+
+### What Was Built
+1. **Calls Tab** — Flat per-talker JTable with 13 columns (Time, Duration, Event, From, Alias, To, Alias, Patch Group, Channel, Frequency, Session, Details). Includes filter toolbar (Hide Encrypted, Hide Data, Hide Ignored).
+2. **SQLite Call Log** — WAL mode, two-table schema (`call_sessions` + `call_events`), auto-created per-system DB files in `~/SDRTrunk/call_logs/`.
+3. **Historical Data Loading** — Configurable history window (1h–72h, default 4h). On channel selection, loads recent sessions from DB below live events.
+4. **Alias Resolution** — Historical records build synthetic IdentifierCollections for alias lookup (same pattern as Events tab).
+5. **isSameTalker() fix** — Handles null→non-null FROM radio transitions without creating duplicate rows. When FROM radio is identified after initial grant, updates existing event's FROM.
+
+### Known Issue: Cross-Frequency Patch Calls
+The session manager currently observes events AFTER P25TrafficChannelManager has already allocated traffic channels. Sessions are keyed by `frequency:timeslot`. When a patch group call spans multiple frequencies (one per member TG), each frequency creates its own session — resulting in multiple rows in the Calls tab for what is logically one call.
+
+**Root cause:** The session manager is an observer, not the authority. It cannot prevent traffic channel allocation.
+
+**Fix required (Phase 3):** Session manager must become the decision point between control channel grants and traffic channel allocation. See `010_phase3_implementation_plan.md`.
 
 ---
 

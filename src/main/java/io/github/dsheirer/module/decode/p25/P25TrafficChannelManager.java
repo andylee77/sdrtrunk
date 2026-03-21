@@ -64,6 +64,7 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
 import io.github.dsheirer.module.decode.p25.reference.DataServiceOptions;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
+import io.github.dsheirer.calllog.CallLogWriter;
 import io.github.dsheirer.module.decode.p25.session.P25CallSessionManager;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.sample.Listener;
@@ -134,6 +135,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private DecodeEventDuplicateDetector mDuplicateDetector = new DecodeEventDuplicateDetector();
     private TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
     private P25CallSessionManager mCallSessionManager;
+    private CallLogWriter mCallLogWriter;
 
     /**
      * Constructs an instance.
@@ -161,6 +163,18 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
 
         mCallSessionManager = new P25CallSessionManager();
+        mCallSessionManager.setTrafficChannelManager(this);
+        mCallSessionManager.setIgnoreDataCalls(mIgnoreDataCalls);
+        mCallSessionManager.setIgnoreEncryptedCalls(mIgnoreEncryptedCalls);
+        mCallSessionManager.setIgnoreUnmonitoredCalls(mIgnoreUnmonitoredCalls);
+
+        // Create CallLogWriter and register as session listener for SQLite persistence
+        mCallLogWriter = new CallLogWriter(
+            parentChannel.getSystem(),
+            parentChannel.getSite(),
+            parentChannel.getName()
+        );
+        mCallSessionManager.addListener(mCallLogWriter);
     }
 
     /**
@@ -170,6 +184,24 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     public P25CallSessionManager getCallSessionManager()
     {
         return mCallSessionManager;
+    }
+
+    /**
+     * Returns the call log writer for database read access (history loading).
+     * @return call log writer or null
+     */
+    public CallLogWriter getCallLogWriter()
+    {
+        return mCallLogWriter;
+    }
+
+    /**
+     * Returns the alias list name from the parent channel configuration.
+     * Used by CallSessionPanel to resolve aliases for historical call log records.
+     */
+    public String getAliasListName()
+    {
+        return mParentChannel != null ? mParentChannel.getAliasListName() : null;
     }
 
     /**
@@ -188,6 +220,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     public void setAliasList(AliasList aliasList)
     {
         mAliasList = aliasList;
+
+        if(mCallSessionManager != null)
+        {
+            mCallSessionManager.setAliasList(aliasList);
+        }
     }
 
     /**
@@ -361,6 +398,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
     /**
      * Broadcasts an initial or update decode event to any registered listener.
+     * Note: Phase 3 removed the passive observer call to mCallSessionManager.onDecodeEvent().
+     * The call session manager now receives events directly via processChannelGrant/Update
+     * and onTrafficChannelUpdate/End.
      */
     public void broadcast(DecodeEvent decodeEvent)
     {
@@ -373,12 +413,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             }
 
             mDecodeEventListener.receive(decodeEvent);
-        }
-
-        // Feed to call session manager for unified call session tracking
-        if(mCallSessionManager != null)
-        {
-            mCallSessionManager.onDecodeEvent(decodeEvent, System.currentTimeMillis());
         }
     }
 
@@ -541,6 +575,12 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             mLock.unlock();
         }
 
+        // Forward to call session manager
+        if(mCallSessionManager != null)
+        {
+            mCallSessionManager.onTrafficChannelEnd(frequency, timeslot, timestamp);
+        }
+
         return completed;
     }
 
@@ -574,6 +614,12 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         finally
         {
             mLock.unlock();
+        }
+
+        // Forward to call session manager
+        if(completed && mCallSessionManager != null)
+        {
+            mCallSessionManager.onTrafficChannelEnd(frequency, timeslot, timestamp);
         }
 
         return completed;
@@ -612,6 +658,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 tracker.addIdentifierIfMissing(identifier);
                 tracker.updateDurationTraffic(timestamp);
                 broadcast(tracker);
+
+                // Forward to call session manager
+                if(mCallSessionManager != null)
+                {
+                    mCallSessionManager.onTrafficChannelUpdate(frequency, timeslot,
+                            tracker.getEvent().getIdentifierCollection(), timestamp);
+                }
             }
         }
         finally
@@ -738,6 +791,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 tracker.updateDurationTraffic(timestamp);
                 broadcast(tracker);
+
+                // Forward to call session manager
+                if(mCallSessionManager != null)
+                {
+                    mCallSessionManager.onTrafficChannelUpdate(frequency, timeslot,
+                            tracker.getEvent().getIdentifierCollection(), timestamp);
+                }
             }
         }
         finally
@@ -1232,6 +1292,129 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
 
         return completed;
+    }
+
+    // ========================================================================
+    // Pool API — used by P25CallSessionManager (Phase 3)
+    // ========================================================================
+
+    /**
+     * Allocates a Phase 1 traffic channel from the pool for the given frequency.
+     * Sets up the channel and requests start via event bus.
+     *
+     * Thread-safe: acquires mLock internally.
+     *
+     * @param apco25Channel that describes the traffic channel downlink frequency
+     * @param ic identifier collection for the call
+     * @param timestamp of the request event
+     * @return the allocated Channel, or null if pool is exhausted or already allocated
+     */
+    public Channel allocatePhase1TrafficChannel(APCO25Channel apco25Channel, IdentifierCollection ic, long timestamp)
+    {
+        long frequency = apco25Channel.getDownlinkFrequency();
+
+        mLock.lock();
+
+        try
+        {
+            if(mAllocatedTrafficChannelMap.containsKey(frequency))
+            {
+                return mAllocatedTrafficChannelMap.get(frequency);
+            }
+
+            Channel trafficChannel = mAvailablePhase1TrafficChannelQueue.poll();
+
+            if(trafficChannel != null)
+            {
+                requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp);
+                return trafficChannel;
+            }
+
+            return null;
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+    }
+
+    /**
+     * Allocates a Phase 2 traffic channel from the pool for the given frequency.
+     * Sets up the channel and requests start via event bus.
+     *
+     * Thread-safe: acquires mLock internally.
+     *
+     * @param apco25Channel that describes the traffic channel downlink frequency
+     * @param ic identifier collection for the call
+     * @param timestamp of the request event
+     * @return the allocated Channel, or null if pool is exhausted or already allocated
+     */
+    public Channel allocatePhase2TrafficChannel(APCO25Channel apco25Channel, IdentifierCollection ic, long timestamp)
+    {
+        long frequency = apco25Channel.getDownlinkFrequency();
+
+        mLock.lock();
+
+        try
+        {
+            if(mAllocatedTrafficChannelMap.containsKey(frequency) || frequency == getCurrentControlFrequency())
+            {
+                return mAllocatedTrafficChannelMap.get(frequency);
+            }
+
+            Channel trafficChannel = mAvailablePhase2TrafficChannelQueue.poll();
+
+            if(trafficChannel != null)
+            {
+                requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp);
+                return trafficChannel;
+            }
+
+            return null;
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+    }
+
+    /**
+     * Checks if a traffic channel is already allocated for the given frequency.
+     *
+     * Thread-safe: acquires mLock internally.
+     *
+     * @param frequency to check
+     * @return true if a traffic channel is allocated for the frequency
+     */
+    public boolean isTrafficChannelAllocated(long frequency)
+    {
+        mLock.lock();
+
+        try
+        {
+            return mAllocatedTrafficChannelMap.containsKey(frequency);
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+    }
+
+    /**
+     * Converts a phase 2 channel to a phase 1 channel.
+     * Public so the call session manager (in a different package) can use it.
+     */
+    public static APCO25Channel convertPhase2ToPhase1Channel(APCO25Channel channel)
+    {
+        return convertPhase2ToPhase1(channel);
+    }
+
+    /**
+     * Returns the Phase 2 scramble parameters, if available.
+     */
+    public ScrambleParameters getPhase2ScrambleParameters()
+    {
+        return mPhase2ScrambleParameters;
     }
 
     /**
@@ -1798,6 +1981,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     public void addDecodeEventListener(Listener<IDecodeEvent> listener)
     {
         mDecodeEventListener = listener;
+
+        // Also wire the decode event listener to the call session manager so it can
+        // broadcast P25ChannelGrantEvents for the Events tab
+        if(mCallSessionManager != null)
+        {
+            mCallSessionManager.setDecodeEventListener(listener);
+        }
     }
 
     /**
@@ -1817,6 +2007,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     @Override
     public void start()
     {
+        if(mCallLogWriter != null)
+        {
+            mCallLogWriter.start();
+        }
         if(mCallSessionManager != null)
         {
             mCallSessionManager.start();
@@ -1829,6 +2023,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         if(mCallSessionManager != null)
         {
             mCallSessionManager.stop();
+        }
+        if(mCallLogWriter != null)
+        {
+            mCallLogWriter.stop();
         }
 
         List<Channel> channels = new ArrayList<>(mAllocatedTrafficChannelMap.values());

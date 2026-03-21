@@ -25,6 +25,7 @@ import io.github.dsheirer.gui.channel.ChannelSpectrumPanel;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.module.decode.event.DecodeEventPanel;
 import io.github.dsheirer.module.decode.event.MessageActivityPanel;
+import io.github.dsheirer.module.decode.session.ui.CallSessionPanel;
 import io.github.dsheirer.playlist.PlaylistManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.settings.SettingsManager;
@@ -40,6 +41,7 @@ public class NowPlayingPanel extends JPanel
 {
     private final ChannelMetadataPanel mChannelMetadataPanel;
     private final ChannelDetailPanel mChannelDetailPanel;
+    private final CallSessionPanel mCallSessionPanel;
     private final DecodeEventPanel mDecodeEventPanel;
     private final MessageActivityPanel mMessageActivityPanel;
     private final ChannelSpectrumPanel mChannelSpectrumSquelchPanel;
@@ -55,6 +57,7 @@ public class NowPlayingPanel extends JPanel
                            SettingsManager settingsManager, boolean detailTabsVisible)
     {
         mChannelDetailPanel = new ChannelDetailPanel(playlistManager.getChannelProcessingManager());
+        mCallSessionPanel = new CallSessionPanel(iconModel, userPreferences, playlistManager.getAliasModel());
         mDecodeEventPanel = new DecodeEventPanel(iconModel, userPreferences, playlistManager.getAliasModel());
         mMessageActivityPanel = new MessageActivityPanel(userPreferences);
         mChannelMetadataPanel = new ChannelMetadataPanel(playlistManager, iconModel, userPreferences);
@@ -94,6 +97,7 @@ public class NowPlayingPanel extends JPanel
         {
             mTabbedPane = new JideTabbedPane();
             mTabbedPane.addTab("Details", mChannelDetailPanel);
+            mTabbedPane.addTab("Calls", mCallSessionPanel);
             mTabbedPane.addTab("Events", mDecodeEventPanel);
             mTabbedPane.addTab("Messages", mMessageActivityPanel);
             mTabbedPane.addTab("Channel", mChannelSpectrumSquelchPanel);
@@ -133,6 +137,7 @@ public class NowPlayingPanel extends JPanel
 
         add(getSplitPane());
         mChannelMetadataPanel.addProcessingChainSelectionListener(mChannelDetailPanel);
+        mChannelMetadataPanel.addProcessingChainSelectionListener(mCallSessionPanel);
         mChannelMetadataPanel.addProcessingChainSelectionListener(mDecodeEventPanel);
         mChannelMetadataPanel.addProcessingChainSelectionListener(mMessageActivityPanel);
         mChannelMetadataPanel.addProcessingChainSelectionListener(mChannelSpectrumSquelchPanel);

@@ -190,6 +190,51 @@ Extensive work documents accumulated in `C:\Users\Andy\Projects\SDRTrunk\work_do
 
 ---
 
+## [2026-03-20] Change 010: Phase 2 — Calls Tab UI + Call Log SQLite Database
+
+### New Files (6)
+- `calllog/CallLogRecord.java` — POJO for call_sessions table row
+- `calllog/CallEventRecord.java` — POJO for call_events table row
+- `calllog/CallLogDatabase.java` — SQLite JDBC database manager (schema, insert, WAL mode)
+- `calllog/CallLogWriter.java` — CallSessionListener → converts sessions to records, writes to DB
+- `module/decode/session/ui/CallSessionModel.java` — Swing AbstractTableModel for call session events
+- `module/decode/session/ui/CallSessionPanel.java` — JPanel with JTable, cell renderers, processing chain listener
+
+### Modified Files (3)
+- `build.gradle` — Added `org.xerial:sqlite-jdbc:3.47.2.0` dependency
+- `channel/metadata/NowPlayingPanel.java` — Added "Calls" tab between Details and Events
+- `module/decode/p25/P25TrafficChannelManager.java` — Creates CallLogWriter, registers as listener, start/stop lifecycle
+
+### Behavior
+- New "Calls" tab in NowPlaying panel shows real-time per-talker call session events
+- Completed call sessions persisted to SQLite at `~/SDRTrunk/call_logs/{system}_calls.db`
+- Schema: `call_sessions` and `call_events` tables with full indexing and WAL mode
+- CallLogWriter auto-starts/stops with P25TrafficChannelManager lifecycle
+
+### Documentation
+- `doc/changes/010_phase2_calls_tab_and_calllog_db.md` — Detailed change doc
+
+---
+
+## [2026-03-21] Change 010 Phase 3: Call Session Manager — Direct Wiring
+
+### Modified Files (4)
+- `module/decode/p25/P25ChannelGrantEvent.java` — Added `channelSourceType` field to builder pattern with `channelSourceType()` setter and propagation in `build()`
+- `module/decode/p25/P25TrafficChannelManager.java` — Wired call session manager with filter settings, alias list, and decode event listener at construction; removed passive observer from `broadcast()`; added traffic-side forwarding (`onTrafficChannelUpdate/End`) to P2 traffic methods; made `convertPhase2ToPhase1Channel()` public
+- `module/decode/p25/phase1/P25P1DecoderState.java` — Redirected `processControlTrafficGrant()` and `processControlAnnouncedTrafficUpdate()` to route through `getCallSessionManager().processChannelGrant/Update()` instead of direct traffic manager calls
+- `module/decode/p25/phase2/P25P2DecoderState.java` — Redirected all 17 `processP2ChannelGrant()` and `processP2ChannelUpdate()` calls to route through `getCallSessionManager()`
+
+### Behavior
+- Control channel grants/updates now flow: DecoderState → CallSessionManager → TrafficChannelManager pool API
+- Traffic channel updates now forwarded: TrafficChannelManager → CallSessionManager.onTrafficChannelUpdate/End()
+- Removed passive observer pattern (onDecodeEvent) — call session manager is now the authoritative routing layer
+- Old deprecated control-channel methods retained in TrafficChannelManager but no longer called (future cleanup)
+
+### Documentation
+- `doc/changes/010_phase3_call_session_wiring.md` — Detailed change doc
+
+---
+
 ## Pending / Future
 
 - [ ] Finalize PlutoSDR tuner integration with Maia IQ streaming

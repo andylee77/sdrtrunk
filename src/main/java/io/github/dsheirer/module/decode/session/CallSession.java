@@ -524,15 +524,48 @@ public class CallSession
 
     /**
      * Checks if the FROM radio in the given event is the same as the current event's FROM radio.
+     *
+     * Rules:
+     * - Both null = same talker (common for control channel grants with no radio ID)
+     * - Current null, incoming non-null = same talker (radio was just identified, update existing event)
+     * - Current non-null, incoming null = same talker (update without radio info, keep existing)
+     * - Both non-null and equal = same talker
+     * - Both non-null and different = DIFFERENT talker → creates new per-talker event
+     *
+     * When the FROM radio transitions from null to identified, this method also updates
+     * the current event's FROM radio so the UI shows the correct radio ID.
      */
     public boolean isSameTalker(Identifier fromRadio)
     {
         CallSessionEvent current = getCurrentEvent();
-        if(current == null || current.getFromRadio() == null || fromRadio == null)
+        if(current == null)
         {
             return false;
         }
-        return current.getFromRadio().equals(fromRadio);
+
+        Identifier currentFrom = current.getFromRadio();
+
+        // Both null = same talker
+        if(currentFrom == null && fromRadio == null)
+        {
+            return true;
+        }
+
+        // Current null, incoming identified = same talker, update FROM
+        if(currentFrom == null && fromRadio != null)
+        {
+            current.setFromRadio(fromRadio);
+            return true;
+        }
+
+        // Current identified, incoming null = same talker, keep existing FROM
+        if(currentFrom != null && fromRadio == null)
+        {
+            return true;
+        }
+
+        // Both non-null: compare by value — only different if values differ
+        return currentFrom.equals(fromRadio);
     }
 
     @Override

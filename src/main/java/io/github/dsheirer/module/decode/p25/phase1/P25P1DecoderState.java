@@ -364,7 +364,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         {
             MutableIdentifierCollection mic = getMutableIdentifierCollection(identifiers, timestamp);
             mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic);
-            mTrafficChannelManager.processP1ControlDirectedChannelGrant(channel, serviceOptions, mic, opcode, timestamp, context);
+            mTrafficChannelManager.getCallSessionManager().processChannelGrant(channel, serviceOptions, mic, opcode, timestamp, context);
         }
     }
 
@@ -381,7 +381,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         MutableIdentifierCollection mic = getMutableIdentifierCollection(identifiers, timestamp);
         mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic);
-        mTrafficChannelManager.processP1ControlAnnouncedTrafficUpdate(channel, serviceOptions, mic, opcode, timestamp, context);
+        mTrafficChannelManager.getCallSessionManager().processChannelUpdate(channel, serviceOptions, mic, opcode, timestamp, context);
     }
 
     /**
