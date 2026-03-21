@@ -82,7 +82,22 @@ Traffic Channel Messages
   `processP1ControlAnnouncedTrafficUpdate`, `processP2ChannelGrant`, `processP2ChannelUpdate`)
   remain in P25TrafficChannelManager for now but are no longer called from decoder states.
   They can be removed in a future cleanup pass.
-- Phase 1 traffic-side methods (`processP1TrafficCallStart`, `processP1TrafficCurrentUser`,
-  `processP1TrafficLDU1`, `processP1TrafficCallEnd`) do not yet forward to the call session
-  manager — this is intentional for Phase 3 scope. Phase 1 traffic forwarding can be added
-  incrementally.
+- ~~Phase 1 traffic-side methods do not yet forward to the call session manager~~ — **Fixed
+  2026-03-21:** All P1 traffic methods now forward to CallSessionManager (see bug fixes below).
+
+## Phase 3 Bug Fixes (2026-03-21)
+
+**Bug 1: Duration incorrect on Calls tab for Phase 1 systems**
+- **Root cause:** P1 traffic channel methods (`processP1TrafficCallStart`, `processP1TrafficCurrentUser`,
+  `processP1TrafficLDU1`, `processP1TrafficCallEnd`) did not forward to CallSessionManager. Duration was
+  only being extended by control channel grant update messages (every few seconds), not by traffic channel
+  voice frames.
+- **Fix:** Added `mCallSessionManager.onTrafficChannelUpdate()` calls to all 5 P1 traffic methods and
+  `mCallSessionManager.onTrafficChannelEnd()` to `processP1TrafficCallEnd()` in `P25TrafficChannelManager`.
+
+**Bug 2: History doesn't reload when switching channels and back**
+- **Root cause:** `CallSessionModel.clear()` always wrapped in `EventQueue.invokeLater()`, causing the
+  actual clear to be deferred even when already on the EDT. This could create timing issues with the
+  subsequent `reloadHistory()` call.
+- **Fix:** `CallSessionModel.clear()` now checks `EventQueue.isDispatchThread()` and executes immediately
+  when already on the EDT via `clearImmediate()`.

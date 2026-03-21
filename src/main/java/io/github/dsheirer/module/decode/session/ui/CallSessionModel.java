@@ -95,19 +95,33 @@ public class CallSessionModel extends AbstractTableModel implements CallSessionL
     }
 
     /**
-     * Clears all rows from the model.
+     * Clears all rows from the model. If already on the EDT, executes immediately.
+     * Otherwise schedules on the EDT.
      */
     public void clear()
     {
-        EventQueue.invokeLater(() -> {
-            int size = mRows.size();
-            if(size > 0)
-            {
-                mRows.clear();
-                mHistoryStartIndex = 0;
-                fireTableRowsDeleted(0, size - 1);
-            }
-        });
+        if(EventQueue.isDispatchThread())
+        {
+            clearImmediate();
+        }
+        else
+        {
+            EventQueue.invokeLater(this::clearImmediate);
+        }
+    }
+
+    /**
+     * Immediately clears all rows. Must be called on the EDT.
+     */
+    private void clearImmediate()
+    {
+        int size = mRows.size();
+        if(size > 0)
+        {
+            mRows.clear();
+            mHistoryStartIndex = 0;
+            fireTableRowsDeleted(0, size - 1);
+        }
     }
 
     /**

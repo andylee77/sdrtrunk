@@ -984,7 +984,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             if(tracker != null)
             {
-                tracker.addIdentifierIfMissing(talkgroup);
+            tracker.addIdentifierIfMissing(talkgroup);
             }
             else
             {
@@ -1006,6 +1006,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             }
 
             broadcast(tracker);
+
+            // Forward to call session manager
+            if(mCallSessionManager != null && tracker != null)
+            {
+                mCallSessionManager.onTrafficChannelUpdate(frequency, P25P1Message.TIMESLOT_1,
+                        tracker.getEvent().getIdentifierCollection(), timestamp);
+            }
         }
         finally
         {
@@ -1076,6 +1083,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
                 tracker.updateDurationTraffic(timestamp);
                 broadcast(tracker);
+
+                // Forward to call session manager
+                if(mCallSessionManager != null)
+                {
+                    mCallSessionManager.onTrafficChannelUpdate(frequency, P25P1Message.TIMESLOT_1,
+                            tracker.getEvent().getIdentifierCollection(), timestamp);
+                }
             }
         }
         finally
@@ -1128,6 +1142,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
                 tracker.updateDurationTraffic(timestamp);
                 broadcast(tracker);
+
+                // Forward to call session manager
+                if(mCallSessionManager != null)
+                {
+                    mCallSessionManager.onTrafficChannelUpdate(frequency, P25P1Message.TIMESLOT_1,
+                            tracker.getEvent().getIdentifierCollection(), timestamp);
+                }
             }
             else
             {
@@ -1150,6 +1171,12 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     tracker = new P25TrafficChannelEventTracker(callEvent);
                     addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
                     broadcast(tracker);
+
+                    // Forward to call session manager
+                    if(mCallSessionManager != null)
+                    {
+                        mCallSessionManager.onTrafficChannelUpdate(frequency, P25P1Message.TIMESLOT_1, mic, timestamp);
+                    }
                 }
             }
         }
@@ -1195,6 +1222,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 tracker.updateDurationTraffic(timestamp);
                 tracker.addDetailsIfMissing(additionalDetails);
                 broadcast(tracker);
+
+                // Forward to call session manager
+                if(mCallSessionManager != null)
+                {
+                    mCallSessionManager.onTrafficChannelUpdate(frequency, P25P1Message.TIMESLOT_1,
+                            tracker.getEvent().getIdentifierCollection(), timestamp);
+                }
                 return;
             }
 
@@ -1209,6 +1243,12 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             tracker = new P25TrafficChannelEventTracker(callEvent);
             addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
             broadcast(tracker);
+
+            // Forward to call session manager
+            if(mCallSessionManager != null)
+            {
+                mCallSessionManager.onTrafficChannelUpdate(frequency, P25P1Message.TIMESLOT_1, ic, timestamp);
+            }
         }
         finally
         {
@@ -1289,6 +1329,12 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         finally
         {
             mLock.unlock();
+        }
+
+        // Forward to call session manager
+        if(mCallSessionManager != null)
+        {
+            mCallSessionManager.onTrafficChannelEnd(frequency, P25P1Message.TIMESLOT_1, timestamp);
         }
 
         return completed;
