@@ -533,8 +533,7 @@ public class P25CallSessionManager
             }
         }
 
-        // Different call or no existing session — end existing if different
-        // Clear cached event so the new call creates a fresh Events tab row
+        // Different TG on the same freq:ts — end old session, start a new one
         if(existing != null)
         {
             transitionToEnding(existing, true);
@@ -741,8 +740,7 @@ public class P25CallSessionManager
             }
         }
 
-        // Different call or no existing session
-        // Clear cached event so the new call creates a fresh Events tab row
+        // Different TG on the same freq:ts — end old session, start a new one
         if(existing != null)
         {
             transitionToEnding(existing, true);
@@ -917,6 +915,8 @@ public class P25CallSessionManager
             if(currentEvent != null)
             {
                 currentEvent.updateEnd(timestamp);
+                // Mark as TRAFFIC source since this update came from a traffic channel
+                currentEvent.setChannelSourceType(ChannelSourceType.TRAFFIC);
 
                 // Update FROM radio if the traffic channel provides one
                 if(fromRadio != null)
@@ -1080,6 +1080,8 @@ public class P25CallSessionManager
             {
                 existing.setIdentifierCollection(ic);
             }
+            // Mark as TRAFFIC source since this update came from a traffic channel
+            existing.setChannelSourceType(ChannelSourceType.TRAFFIC);
             mDecodeEventListener.receive(existing);
         }
     }

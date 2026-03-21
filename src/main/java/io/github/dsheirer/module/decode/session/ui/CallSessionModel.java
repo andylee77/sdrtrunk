@@ -474,6 +474,8 @@ public class CallSessionModel extends AbstractTableModel implements CallSessionL
 
     /**
      * Formats the channel descriptor + timeslot for display (live events).
+     * Mirrors the logic in DecodeEventModel to avoid double-TS display:
+     * only appends " TS{n}" when the descriptor string doesn't already contain "TS".
      */
     private String formatChannel(CallSessionEvent event)
     {
@@ -481,11 +483,13 @@ public class CallSessionModel extends AbstractTableModel implements CallSessionL
 
         if(descriptor != null)
         {
-            if(event.hasTimeslot())
+            String descStr = descriptor.toString();
+
+            if(event.hasTimeslot() && !descStr.contains("TS"))
             {
-                return descriptor + " TS" + event.getTimeslot();
+                return descStr + " TS" + event.getTimeslot();
             }
-            return descriptor.toString();
+            return descStr;
         }
         else if(event.hasTimeslot())
         {
