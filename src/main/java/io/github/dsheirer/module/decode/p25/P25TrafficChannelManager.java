@@ -66,6 +66,7 @@ import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.calllog.CallLogWriter;
 import io.github.dsheirer.module.decode.p25.session.P25CallSessionManager;
+import io.github.dsheirer.module.decode.session.ChannelSourceType;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.config.SourceConfigTuner;
@@ -398,9 +399,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
     /**
      * Broadcasts an initial or update decode event to any registered listener.
-     * Note: Phase 3 removed the passive observer call to mCallSessionManager.onDecodeEvent().
-     * The call session manager now receives events directly via processChannelGrant/Update
-     * and onTrafficChannelUpdate/End.
+     *
+     * Phase 4: This method is only used for non-traffic-channel events (data channel grants,
+     * TrafficChannelTeardownMonitor rejected notifications). All traffic-side voice events
+     * are now broadcast exclusively by P25CallSessionManager via cached control events.
      */
     public void broadcast(DecodeEvent decodeEvent)
     {
@@ -422,7 +424,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public void broadcast(P25TrafficChannelEventTracker tracker)
     {
-        broadcast(tracker.getEvent());
+        P25ChannelGrantEvent event = tracker.getEvent();
+        // Tag with TRAFFIC source type so the Events tab Source column shows origin
+        if(event.getChannelSourceType() == ChannelSourceType.UNKNOWN)
+        {
+            event.setChannelSourceType(ChannelSourceType.TRAFFIC);
+        }
+        broadcast(event);
     }
 
     /**
@@ -1425,13 +1433,38 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     }
 
     /**
-     * Checks if a traffic channel is already allocated for the given frequency.
+     * Releases a traffic channel allocated for the given frequency, returning it to the
+     * available pool. Used by P25CallSessionManager to release duplicate traffic channels
+     * when patch group consolidation merges sessions.
      *
-     * Thread-safe: acquires mLock internally.
-     *
-     * @param frequency to check
-     * @return true if a traffic channel is allocated for the frequency
+     * @param frequency the downlink frequency to release
      */
+    public void releaseTrafficChannel(long frequency)
+    {
+        mLock.lock();
+
+        try
+        {
+            Channel channel = mAllocatedTrafficChannelMap.remove(frequency);
+            if(channel != null)
+            {
+                mLog.info("Releasing duplicate traffic channel for frequency {} (patch consolidation)", frequency);
+                // Disable the channel processing so it stops
+                broadcast(new ChannelEvent(channel, Event.REQUEST_DISABLE));
+
+                // Clean up event tracker
+                removeTracker(frequency, P25P1Message.TIMESLOT_1);
+
+                // Note: channel will be returned to pool by TrafficChannelTeardownMonitor
+                // when the NOTIFICATION_PROCESSING_STOP event arrives
+            }
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+    }
+
     public boolean isTrafficChannelAllocated(long frequency)
     {
         mLock.lock();

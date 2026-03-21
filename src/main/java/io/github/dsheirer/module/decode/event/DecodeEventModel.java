@@ -25,6 +25,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
 import java.awt.EventQueue;
@@ -49,7 +50,8 @@ public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implem
     public static final int COLUMN_CHANNEL = 8;
     public static final int COLUMN_FREQUENCY = 9;
     public static final int COLUMN_DETAILS = 10;
-    protected String[] mHeaders = new String[]{"Time", "Duration", "Event", "From", "Alias", "To", "Alias", "Patch Group", "Channel", "Frequency", "Details"};
+    public static final int COLUMN_SOURCE = 11;
+    protected String[] mHeaders = new String[]{"Time", "Duration", "Event", "From", "Alias", "To", "Alias", "Patch Group", "Channel", "Frequency", "Details", "Source"};
 
     public DecodeEventModel()
     {
@@ -145,6 +147,12 @@ public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implem
                     return event.getChannelDescriptor();
                 case COLUMN_DETAILS:
                     return event.getDetails();
+                case COLUMN_SOURCE:
+                    if(event instanceof P25ChannelGrantEvent cge)
+                    {
+                        return cge.getChannelSourceType() != null ? cge.getChannelSourceType().getLabel() : "";
+                    }
+                    return "";
             }
         }
 
@@ -170,6 +178,7 @@ public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implem
             case COLUMN_PATCH_GROUP:
                 return IdentifierCollection.class;
             case COLUMN_CHANNEL:
+            case COLUMN_SOURCE:
                 return String.class;
         }
 

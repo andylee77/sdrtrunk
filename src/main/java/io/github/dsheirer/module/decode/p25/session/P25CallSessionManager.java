@@ -97,6 +97,11 @@ public class P25CallSessionManager
     /** Sessions in ENDING state waiting for gap tolerance timeout */
     private final Map<String, CallSession> mEndingSessions = new ConcurrentHashMap<>();
 
+    /** Cached P25ChannelGrantEvent objects for the Events tab, keyed by "frequency:timeslot".
+     *  Reusing the SAME object reference is critical — ClearableHistoryModel.add() uses
+     *  contains() to detect whether to update an existing row or add a new one. */
+    private final Map<String, P25ChannelGrantEvent> mActiveControlEvents = new ConcurrentHashMap<>();
+
     /** Listeners for session lifecycle events */
     private final List<CallSessionListener> mListeners = new CopyOnWriteArrayList<>();
 
@@ -276,6 +281,22 @@ public class P25CallSessionManager
                 return;
             }
 
+            // No active session — try to reactivate from ENDING (PTT release within same call)
+            if(existing == null)
+            {
+                CallSession reactivated = reactivateFromEnding(frequency, timeslot, toTalkgroup, fromRadio, timestamp);
+                if(reactivated != null)
+                {
+                    CallSessionEvent currentEvent = reactivated.getCurrentEvent();
+                    if(currentEvent != null)
+                    {
+                        currentEvent.updateEnd(timestamp);
+                        notifyEventUpdated(reactivated, currentEvent);
+                    }
+                    return;
+                }
+            }
+
             // No matching session or different call — treat as a new grant
             processChannelGrant(apco25Channel, serviceOptions, ic, opcode, timestamp, context);
         }
@@ -396,52 +417,120 @@ public class P25CallSessionManager
         Identifier toTalkgroup = extractToIdentifier(ic);
         Identifier fromRadio = ic != null ? ic.getFromIdentifier() : null;
 
-        // Check for same call continuation
+        // Upgrade event type if PatchGroupManager resolved the TO identifier to a PatchGroupIdentifier
+        if(toTalkgroup instanceof PatchGroupIdentifier)
+        {
+            boolean encrypted = serviceOptions != null && serviceOptions.isEncrypted();
+            decodeEventType = encrypted ? DecodeEventType.CALL_PATCH_GROUP_ENCRYPTED : DecodeEventType.CALL_PATCH_GROUP;
+        }
+
+        // Cross-frequency patch group matching: if no session exists on this frequency but we
+        // have an active session for the same patch group on another frequency, update that
+        // session and skip allocating a duplicate traffic channel
+        if(existing == null)
+        {
+            CallSession crossFreqSession = findCrossFrequencySession(toTalkgroup, fromRadio, timestamp);
+            if(crossFreqSession != null)
+            {
+                crossFreqSession.updateActivity(timestamp);
+                crossFreqSession.addSeenTalkgroup(toTalkgroup);
+
+                // Broadcast event for Events tab but don't allocate another traffic channel
+                broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot,
+                        "PATCH MEMBER - PHASE 1 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""),
+                        timestamp);
+                return;
+            }
+        }
+
+        // Check for same call continuation (active session)
         if(existing != null && existing.isMatch(frequency, timeslot, toTalkgroup, fromRadio, timestamp))
         {
-            // Same call — check if we need to filter now
-            if(mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted())
-            {
-                existing.updateActivity(timestamp);
-                broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot,
-                        "PHASE 1 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""), timestamp);
-                return;
-            }
-
-            if(mIgnoreUnmonitoredCalls && isUnmonitored(ic))
-            {
-                existing.updateActivity(timestamp);
-                broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot,
-                        "PHASE 1 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""), timestamp);
-                return;
-            }
-
-            // Update session
+            // Always update session state so event type (including encryption) is preserved
             existing.updateActivity(timestamp);
             if(serviceOptions != null)
             {
                 existing.setServiceOptions(serviceOptions);
             }
             existing.addSeenTalkgroup(toTalkgroup);
-
-            // Update per-talker event
             updateSessionFromGrant(existing, ic, decodeEventType, serviceOptions, apco25Channel, timestamp);
 
-            // Ensure traffic channel is allocated (might have been rejected initially)
-            if(mTrafficChannelManager != null && !mTrafficChannelManager.isTrafficChannelAllocated(frequency)
-                    && !(mIgnoreDataCalls && isDataGrant))
+            // Use session's (possibly upgraded) event type for broadcasting
+            DecodeEventType broadcastType = existing.getEventType() != null ? existing.getEventType() : decodeEventType;
+
+            // Check BOTH ServiceOptions AND session's encryption state (may have been upgraded
+            // by traffic channel detection via onTrafficChannelUpdate).
+            boolean sessionEncrypted = (serviceOptions != null && serviceOptions.isEncrypted())
+                    || isEncryptedEventType(broadcastType);
+
+            // Determine if this is an ignored call — skip traffic channel but still update session
+            boolean ignored = false;
+            String ignoredPrefix = "";
+            if(mIgnoreEncryptedCalls && sessionEncrypted)
             {
-                Channel trafficChannel = mTrafficChannelManager.allocatePhase1TrafficChannel(apco25Channel, ic, timestamp);
-                if(trafficChannel == null)
-                {
-                    mLog.debug("Max traffic channels exceeded for frequency {}", frequency);
-                }
+                ignored = true;
+                ignoredPrefix = "IGNORED: ENCRYPTED CALL ";
+            }
+            else if(mIgnoreUnmonitoredCalls && isUnmonitored(ic))
+            {
+                ignored = true;
+                ignoredPrefix = "IGNORED: UNMONITORED CALL ";
             }
 
-            // Broadcast control event for Events tab
-            broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot,
-                    "PHASE 1 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""), timestamp);
+            if(!ignored)
+            {
+                // Ensure traffic channel is allocated (might have been rejected initially)
+                if(mTrafficChannelManager != null && !mTrafficChannelManager.isTrafficChannelAllocated(frequency)
+                        && !(mIgnoreDataCalls && isDataGrant))
+                {
+                    Channel trafficChannel = mTrafficChannelManager.allocatePhase1TrafficChannel(apco25Channel, ic, timestamp);
+                    if(trafficChannel == null)
+                    {
+                        mLog.debug("Max traffic channels exceeded for frequency {}", frequency);
+                    }
+                }
+            }
+            else
+            {
+                // Update session event details so Calls tab can filter by "IGNORED"
+                CallSessionEvent currentEvt = existing.getCurrentEvent();
+                if(currentEvt != null)
+                {
+                    String evtDetails = currentEvt.getDetails();
+                    if(evtDetails == null || !evtDetails.contains("IGNORED"))
+                    {
+                        currentEvt.setDetails(ignoredPrefix.trim());
+                    }
+                }
+                existing.setDetails(ignoredPrefix.trim());
+            }
+
+            String details = ignored ? ignoredPrefix : "PHASE 1 CHANNEL GRANT ";
+            details += (serviceOptions != null ? serviceOptions : "");
+            broadcastControlGrantEvent(broadcastType, serviceOptions, apco25Channel, ic, 0, details, timestamp);
             return;
+        }
+
+        // No active session — try to reactivate from ENDING (PTT release within same call)
+        if(existing == null)
+        {
+            CallSession reactivated = reactivateFromEnding(frequency, timeslot, toTalkgroup, fromRadio, timestamp);
+            if(reactivated != null)
+            {
+                reactivated.addSeenTalkgroup(toTalkgroup);
+                updateSessionFromGrant(reactivated, ic, decodeEventType, serviceOptions, apco25Channel, timestamp);
+
+                // Ensure traffic channel is allocated
+                if(mTrafficChannelManager != null && !mTrafficChannelManager.isTrafficChannelAllocated(frequency)
+                        && !(mIgnoreDataCalls && isDataGrant))
+                {
+                    mTrafficChannelManager.allocatePhase1TrafficChannel(apco25Channel, ic, timestamp);
+                }
+
+                broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, 0,
+                        "PHASE 1 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""), timestamp);
+                return;
+            }
         }
 
         // Different call or no existing session — end existing if different
@@ -450,60 +539,67 @@ public class P25CallSessionManager
             transitionToEnding(existing);
         }
 
-        // Apply filters for new grants
+        // Determine ignored reason (if any) — but ALWAYS create a session so Calls tab
+        // gets entries and event type state is preserved across grants (e.g., encryption).
+        // Traffic channels are NOT allocated for ignored calls — they are control-channel-only.
+        String ignoredReason = null;
         if(mIgnoreDataCalls && isDataGrant)
         {
-            broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot,
-                    "IGNORED: PHASE 1 DATA CALL " + (serviceOptions != null ? serviceOptions : ""), timestamp);
-            return;
+            ignoredReason = "IGNORED: PHASE 1 DATA CALL";
         }
-
-        if(mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted())
+        else if(mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted())
         {
-            broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot,
-                    "IGNORED: ENCRYPTED CALL " + (serviceOptions != null ? serviceOptions : ""), timestamp);
-            return;
+            ignoredReason = "IGNORED: ENCRYPTED CALL";
         }
-
-        if(mIgnoreUnmonitoredCalls && isUnmonitored(ic))
+        else if(mIgnoreUnmonitoredCalls && isUnmonitored(ic))
         {
-            broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot,
-                    "IGNORED: UNMONITORED CALL " + (serviceOptions != null ? serviceOptions : ""), timestamp);
-            return;
+            ignoredReason = "IGNORED: UNMONITORED CALL";
         }
 
-        // Create new session
+        // Create new session for ALL calls (even ignored ones)
         EncryptionKeyIdentifier encryption = extractEncryption(ic);
         CallSession newSession = createSession(frequency, timeslot, toTalkgroup, decodeEventType,
                 serviceOptions, apco25Channel, encryption, timestamp);
         mActiveSessions.put(key, newSession);
 
-        // Create per-talker event
+        // Create per-talker event (use timeslot 0 for display — Phase 1 has no meaningful timeslot)
+        // Use ignoredReason as details if set, so CallSessionModel can detect "IGNORED" for filtering
+        String sessionDetails = ignoredReason != null ? ignoredReason : context;
         CallSessionEvent sessionEvent = createSessionEvent(newSession, fromRadio, toTalkgroup,
                 decodeEventType, ic, apco25Channel, serviceOptions,
-                context, frequency, timeslot, timestamp);
+                sessionDetails, frequency, 0, timestamp);
         sessionEvent.setChannelSourceType(ChannelSourceType.CONTROL);
         newSession.addEvent(sessionEvent);
         newSession.setState(CallState.ACTIVE);
-        newSession.setDetails(context);
+        newSession.setDetails(sessionDetails);
 
         notifySessionCreated(newSession);
         notifyEventAdded(newSession, sessionEvent);
 
-        // Allocate traffic channel
-        String details = isDataGrant ? "PHASE 1 DATA CHANNEL GRANT " : "PHASE 1 CHANNEL GRANT ";
-        details += (serviceOptions != null ? serviceOptions : "");
-
-        if(mTrafficChannelManager != null)
+        // Build details string and allocate traffic channel only for non-ignored calls
+        String details;
+        if(ignoredReason != null)
         {
-            Channel trafficChannel = mTrafficChannelManager.allocatePhase1TrafficChannel(apco25Channel, ic, timestamp);
-            if(trafficChannel == null)
+            // Ignored call — control-channel-only, no traffic channel allocation
+            details = ignoredReason + " " + (serviceOptions != null ? serviceOptions : "");
+        }
+        else
+        {
+            // Normal call — allocate traffic channel
+            details = isDataGrant ? "PHASE 1 DATA CHANNEL GRANT " : "PHASE 1 CHANNEL GRANT ";
+            details += (serviceOptions != null ? serviceOptions : "");
+
+            if(mTrafficChannelManager != null)
             {
-                details = P25TrafficChannelManager.MAX_TRAFFIC_CHANNELS_EXCEEDED + " - " + details;
+                Channel trafficChannel = mTrafficChannelManager.allocatePhase1TrafficChannel(apco25Channel, ic, timestamp);
+                if(trafficChannel == null)
+                {
+                    details = P25TrafficChannelManager.MAX_TRAFFIC_CHANNELS_EXCEEDED + " - " + details;
+                }
             }
         }
 
-        broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot, details, timestamp);
+        broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, 0, details, timestamp);
     }
 
     /**
@@ -537,48 +633,111 @@ public class P25CallSessionManager
         Identifier toTalkgroup = extractToIdentifier(ic);
         Identifier fromRadio = ic != null ? ic.getFromIdentifier() : null;
 
+        // Upgrade event type if PatchGroupManager resolved the TO identifier to a PatchGroupIdentifier
+        if(toTalkgroup instanceof PatchGroupIdentifier)
+        {
+            boolean encrypted = serviceOptions != null && serviceOptions.isEncrypted();
+            decodeEventType = encrypted ? DecodeEventType.CALL_PATCH_GROUP_ENCRYPTED : DecodeEventType.CALL_PATCH_GROUP;
+        }
+
+        // Cross-frequency patch group matching for P2 channels
+        if(existing == null)
+        {
+            CallSession crossFreqSession = findCrossFrequencySession(toTalkgroup, fromRadio, timestamp);
+            if(crossFreqSession != null)
+            {
+                crossFreqSession.updateActivity(timestamp);
+                crossFreqSession.addSeenTalkgroup(toTalkgroup);
+
+                broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot,
+                        "PATCH MEMBER - PHASE 2 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""),
+                        timestamp);
+                return;
+            }
+        }
+
         // Check for same call continuation
         if(existing != null && existing.isMatch(frequency, timeslot, toTalkgroup, fromRadio, timestamp))
         {
-            if(mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted())
-            {
-                existing.updateActivity(timestamp);
-                broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot,
-                        "PHASE 2 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""), timestamp);
-                return;
-            }
-
-            if(mIgnoreUnmonitoredCalls && isUnmonitored(ic))
-            {
-                existing.updateActivity(timestamp);
-                broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot,
-                        "PHASE 2 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""), timestamp);
-                return;
-            }
-
+            // Always update session state so event type (including encryption) is preserved
             existing.updateActivity(timestamp);
             if(serviceOptions != null)
             {
                 existing.setServiceOptions(serviceOptions);
             }
             existing.addSeenTalkgroup(toTalkgroup);
-
             updateSessionFromGrant(existing, ic, decodeEventType, serviceOptions, apco25Channel, timestamp);
 
-            // Ensure traffic channel is allocated
-            if(mTrafficChannelManager != null && !mTrafficChannelManager.isTrafficChannelAllocated(frequency)
-                    && !(mIgnoreDataCalls && isDataGrant))
+            DecodeEventType broadcastType = existing.getEventType() != null ? existing.getEventType() : decodeEventType;
+            boolean sessionEncrypted = (serviceOptions != null && serviceOptions.isEncrypted())
+                    || isEncryptedEventType(broadcastType);
+
+            boolean ignored = false;
+            String ignoredPrefix = "";
+            if(mIgnoreEncryptedCalls && sessionEncrypted)
             {
-                Channel trafficChannel = mTrafficChannelManager.allocatePhase2TrafficChannel(apco25Channel, ic, timestamp);
-                if(trafficChannel == null)
-                {
-                    mLog.debug("Max traffic channels exceeded for P2 frequency {}", frequency);
-                }
+                ignored = true;
+                ignoredPrefix = "IGNORED: ENCRYPTED CALL ";
+            }
+            else if(mIgnoreUnmonitoredCalls && isUnmonitored(ic))
+            {
+                ignored = true;
+                ignoredPrefix = "IGNORED: UNMONITORED CALL ";
             }
 
-            broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot,
-                    "PHASE 2 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""), timestamp);
+            if(!ignored)
+            {
+                if(mTrafficChannelManager != null && !mTrafficChannelManager.isTrafficChannelAllocated(frequency)
+                        && !(mIgnoreDataCalls && isDataGrant))
+                {
+                    Channel trafficChannel = mTrafficChannelManager.allocatePhase2TrafficChannel(apco25Channel, ic, timestamp);
+                    if(trafficChannel == null)
+                    {
+                        mLog.debug("Max traffic channels exceeded for P2 frequency {}", frequency);
+                    }
+                }
+            }
+            else
+            {
+                // Update session event details so Calls tab can filter by "IGNORED"
+                CallSessionEvent currentEvt = existing.getCurrentEvent();
+                if(currentEvt != null)
+                {
+                    String evtDetails = currentEvt.getDetails();
+                    if(evtDetails == null || !evtDetails.contains("IGNORED"))
+                    {
+                        currentEvt.setDetails(ignoredPrefix.trim());
+                    }
+                }
+                existing.setDetails(ignoredPrefix.trim());
+            }
+
+            String details = ignored ? ignoredPrefix : "PHASE 2 CHANNEL GRANT ";
+            details += (serviceOptions != null ? serviceOptions : "");
+            broadcastControlGrantEvent(broadcastType, serviceOptions, apco25Channel, ic, timeslot, details, timestamp);
             return;
+        }
+
+        // No active session — try to reactivate from ENDING (PTT release within same call)
+        if(existing == null)
+        {
+            CallSession reactivated = reactivateFromEnding(frequency, timeslot, toTalkgroup, fromRadio, timestamp);
+            if(reactivated != null)
+            {
+                reactivated.addSeenTalkgroup(toTalkgroup);
+                updateSessionFromGrant(reactivated, ic, decodeEventType, serviceOptions, apco25Channel, timestamp);
+
+                // Ensure traffic channel is allocated
+                if(mTrafficChannelManager != null && !mTrafficChannelManager.isTrafficChannelAllocated(frequency)
+                        && !(mIgnoreDataCalls && isDataGrant))
+                {
+                    mTrafficChannelManager.allocatePhase2TrafficChannel(apco25Channel, ic, timestamp);
+                }
+
+                broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot,
+                        "PHASE 2 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""), timestamp);
+                return;
+            }
         }
 
         // Different call or no existing session
@@ -587,37 +746,33 @@ public class P25CallSessionManager
             transitionToEnding(existing);
         }
 
-        // Apply filters
+        // Determine ignored reason — but ALWAYS create a session so Calls tab gets entries
+        // and event type state is preserved across grants. No traffic channel for ignored calls.
+        String ignoredReason = null;
         if(mIgnoreDataCalls && isDataGrant)
         {
-            broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot,
-                    "PHASE 2 DATA CALL IGNORED: " + (serviceOptions != null ? serviceOptions : ""), timestamp);
-            return;
+            ignoredReason = "IGNORED: PHASE 2 DATA CALL";
         }
-
-        if(mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted())
+        else if(mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted())
         {
-            broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot,
-                    "IGNORED: ENCRYPTED CALL " + (serviceOptions != null ? serviceOptions : ""), timestamp);
-            return;
+            ignoredReason = "IGNORED: ENCRYPTED CALL";
         }
-
-        if(mIgnoreUnmonitoredCalls && isUnmonitored(ic))
+        else if(mIgnoreUnmonitoredCalls && isUnmonitored(ic))
         {
-            broadcastControlGrantEvent(decodeEventType, serviceOptions, apco25Channel, ic, timeslot,
-                    "IGNORED: UNMONITORED CALL " + (serviceOptions != null ? serviceOptions : ""), timestamp);
-            return;
+            ignoredReason = "IGNORED: UNMONITORED CALL";
         }
 
-        // Create new session
+        // Create new session for ALL calls (even ignored ones)
         EncryptionKeyIdentifier encryption = extractEncryption(ic);
         CallSession newSession = createSession(frequency, timeslot, toTalkgroup, decodeEventType,
                 serviceOptions, apco25Channel, encryption, timestamp);
         mActiveSessions.put(key, newSession);
 
+        // Use ignoredReason as details if set, so CallSessionModel can detect "IGNORED" for filtering
+        String sessionDetails = ignoredReason != null ? ignoredReason : context;
         CallSessionEvent sessionEvent = createSessionEvent(newSession, fromRadio, toTalkgroup,
                 decodeEventType, ic, apco25Channel, serviceOptions,
-                context, frequency, timeslot, timestamp);
+                sessionDetails, frequency, timeslot, timestamp);
         sessionEvent.setChannelSourceType(ChannelSourceType.CONTROL);
         newSession.addEvent(sessionEvent);
         newSession.setState(CallState.ACTIVE);
@@ -625,15 +780,23 @@ public class P25CallSessionManager
         notifySessionCreated(newSession);
         notifyEventAdded(newSession, sessionEvent);
 
-        // Allocate traffic channel
-        String details = "PHASE 2 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : "");
-
-        if(mTrafficChannelManager != null)
+        // Build details and allocate traffic channel only for non-ignored calls
+        String details;
+        if(ignoredReason != null)
         {
-            Channel trafficChannel = mTrafficChannelManager.allocatePhase2TrafficChannel(apco25Channel, ic, timestamp);
-            if(trafficChannel == null)
+            details = ignoredReason + " " + (serviceOptions != null ? serviceOptions : "");
+        }
+        else
+        {
+            details = "PHASE 2 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : "");
+
+            if(mTrafficChannelManager != null)
             {
-                details = P25TrafficChannelManager.MAX_TRAFFIC_CHANNELS_EXCEEDED + " - " + details;
+                Channel trafficChannel = mTrafficChannelManager.allocatePhase2TrafficChannel(apco25Channel, ic, timestamp);
+                if(trafficChannel == null)
+                {
+                    details = P25TrafficChannelManager.MAX_TRAFFIC_CHANNELS_EXCEEDED + " - " + details;
+                }
             }
         }
 
@@ -678,13 +841,95 @@ public class P25CallSessionManager
                 session.updateRadioAffinity(fromRadio.toString(), timestamp);
             }
 
+            // Check for encryption from traffic channel (HDU/LDU messages carry EncryptionKeyIdentifier).
+            // This is the primary encryption detection path — control channel TSBK grants often do NOT
+            // include encryption info; it's only available once the traffic channel starts decoding.
+            EncryptionKeyIdentifier eki = extractEncryption(ic);
+            if(eki != null && eki.isEncrypted())
+            {
+                session.setEncryption(eki);
+
+                // Upgrade the session and event type to encrypted variant
+                if(!isEncryptedEventType(session.getEventType()))
+                {
+                    DecodeEventType upgradedType = upgradeToEncrypted(session.getEventType());
+                    session.setEventType(upgradedType);
+
+                    CallSessionEvent currentEvent = session.getCurrentEvent();
+                    if(currentEvent != null)
+                    {
+                        currentEvent.setEventType(upgradedType);
+                    }
+
+                    // Also upgrade the cached control event in the Events tab so it shows
+                    // "Encrypted Group Call" instead of "Group Call". Without this, the
+                    // control-sourced event row never gets its type upgraded because the
+                    // control channel grant messages don't carry encryption info.
+                    // Note: Phase 1 control events are cached with timeslot 0, but traffic
+                    // channels report timeslot 1. Try both keys to find the cached event.
+                    String eventKey = frequency + ":" + timeslot;
+                    P25ChannelGrantEvent cachedEvent = mActiveControlEvents.get(eventKey);
+                    if(cachedEvent == null && timeslot != 0)
+                    {
+                        eventKey = frequency + ":0";
+                        cachedEvent = mActiveControlEvents.get(eventKey);
+                    }
+                    if(cachedEvent != null)
+                    {
+                        cachedEvent.setDecodeEventType(upgradedType);
+                        // Update details to reflect encryption
+                        String existingDetails = cachedEvent.getDetails();
+                        if(existingDetails != null && !existingDetails.contains("ENCRYPTED"))
+                        {
+                            if(mIgnoreEncryptedCalls)
+                            {
+                                cachedEvent.setDetails("IGNORED: ENCRYPTED CALL " + existingDetails);
+                            }
+                        }
+                        if(mDecodeEventListener != null)
+                        {
+                            mDecodeEventListener.receive(cachedEvent);
+                        }
+                    }
+
+                    // Also update session details for Calls tab filtering
+                    if(mIgnoreEncryptedCalls)
+                    {
+                        if(currentEvent != null)
+                        {
+                            String details = currentEvent.getDetails();
+                            if(details == null || !details.contains("IGNORED"))
+                            {
+                                currentEvent.setDetails("IGNORED: ENCRYPTED CALL");
+                            }
+                        }
+                        session.setDetails("IGNORED: ENCRYPTED CALL");
+                    }
+
+                    mLog.debug("Session {} upgraded to encrypted via traffic channel: {}",
+                            session.getSessionId(), upgradedType);
+                }
+            }
+
             CallSessionEvent currentEvent = session.getCurrentEvent();
             if(currentEvent != null)
             {
                 currentEvent.updateEnd(timestamp);
+
+                // Update FROM radio if the traffic channel provides one
+                if(fromRadio != null)
+                {
+                    currentEvent.setFromRadio(fromRadio);
+                }
+
+                // Only update the identifier collection if it has richer info
+                // (has a FROM radio) to avoid overwriting an identified FROM with null
                 if(ic != null)
                 {
-                    currentEvent.setIdentifierCollection(ic);
+                    if(fromRadio != null || currentEvent.getFromRadio() == null)
+                    {
+                        currentEvent.setIdentifierCollection(ic);
+                    }
                 }
                 notifyEventUpdated(session, currentEvent);
             }
@@ -697,7 +942,16 @@ public class P25CallSessionManager
 
     /**
      * Called from P25TrafficChannelManager when traffic-side call end messages
-     * (TDU, TDULC, call end) arrive. Transitions the session to ENDING state.
+     * (TDU, TDULC, call end) arrive.
+     *
+     * Transitions the session to ENDING state, removing it from mActiveSessions. This ensures
+     * that when a NEW call starts on the same frequency/talkgroup, it creates a new session
+     * instead of extending the old one's duration.
+     *
+     * For PTT releases WITHIN a group call (where the control channel continues sending grant
+     * updates), processChannelGrant/Update will find the session in mEndingSessions and
+     * reactivate it via reactivateFromEnding(). This correctly handles the P25 pattern of:
+     * TDU → brief gap → next grant update → same call continues.
      *
      * @param frequency traffic channel downlink frequency
      * @param timeslot timeslot number
@@ -732,8 +986,13 @@ public class P25CallSessionManager
     // ========================================================================
 
     /**
-     * Creates and broadcasts a P25ChannelGrantEvent for the Events tab.
+     * Creates or updates a cached P25ChannelGrantEvent for the Events tab and broadcasts it.
      * Tagged with ChannelSourceType.CONTROL.
+     *
+     * CRITICAL: ClearableHistoryModel.add() uses contains() (object identity) to decide
+     * whether to update an existing row or add a new one. We MUST reuse the same event object
+     * for the same call to get in-place updates with duration, encryption upgrades, etc.
+     * Creating a new object each time would create a new row per control channel message.
      */
     private void broadcastControlGrantEvent(DecodeEventType eventType, ServiceOptions serviceOptions,
                                             APCO25Channel channel, IdentifierCollection ic,
@@ -744,15 +1003,36 @@ public class P25CallSessionManager
             return;
         }
 
-        P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(eventType, timestamp, serviceOptions)
-                .channelDescriptor(channel)
-                .details(details)
-                .identifiers(ic)
-                .timeslot(timeslot)
-                .build();
-        event.setChannelSourceType(ChannelSourceType.CONTROL);
+        String eventKey = channel.getDownlinkFrequency() + ":" + timeslot;
+        P25ChannelGrantEvent existing = mActiveControlEvents.get(eventKey);
 
-        mDecodeEventListener.receive(event);
+        if(existing != null)
+        {
+            // Update the existing event object in-place — same reference so model updates the row
+            existing.setDecodeEventType(eventType);
+            existing.setDetails(details);
+            existing.setIdentifierCollection(ic);
+            existing.setDuration(timestamp - existing.getTimeStart());
+            if(serviceOptions != null)
+            {
+                existing.setServiceOptions(serviceOptions);
+            }
+            existing.setChannelDescriptor(channel);
+            mDecodeEventListener.receive(existing);
+        }
+        else
+        {
+            // Create new event for this frequency/timeslot
+            P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(eventType, timestamp, serviceOptions)
+                    .channelDescriptor(channel)
+                    .details(details)
+                    .identifiers(ic)
+                    .timeslot(timeslot)
+                    .build();
+            event.setChannelSourceType(ChannelSourceType.CONTROL);
+            mActiveControlEvents.put(eventKey, event);
+            mDecodeEventListener.receive(event);
+        }
     }
 
     // ========================================================================
@@ -940,7 +1220,15 @@ public class P25CallSessionManager
     // ========================================================================
 
     /**
-     * Updates an existing session's per-talker event from a control channel grant.
+     * Updates an existing session's event from a control channel grant.
+     *
+     * This method consolidates all activity for a call into ONE event per session,
+     * matching how the P25TrafficChannelManager consolidates events using
+     * isSameCallCheckingToOnly(). The FROM radio is updated when a new one is
+     * identified, but a change in FROM does NOT create a new row — it just updates
+     * the existing event. This prevents the Calls tab from splitting one continuous
+     * call into many short rows every time a different radio keys up or when grant
+     * updates arrive without a FROM field.
      */
     private void updateSessionFromGrant(CallSession session, IdentifierCollection ic,
                                         DecodeEventType eventType, ServiceOptions serviceOptions,
@@ -976,36 +1264,29 @@ public class P25CallSessionManager
             }
         }
 
-        // Check if same talker or different
-        if(session.isSameTalker(fromRadio))
+        // Always update the existing event — do NOT create new per-talker events.
+        // This matches the TrafficChannelManager's behavior of one event per call.
+        CallSessionEvent currentEvent = session.getCurrentEvent();
+        if(currentEvent != null)
         {
-            CallSessionEvent currentEvent = session.getCurrentEvent();
-            if(currentEvent != null)
+            currentEvent.updateEnd(timestamp);
+
+            // Update FROM radio: keep existing if incoming is null, update if incoming is new
+            if(fromRadio != null)
             {
-                currentEvent.updateEnd(timestamp);
-                if(ic != null)
+                currentEvent.setFromRadio(fromRadio);
+            }
+
+            // Update identifier collection only if it has richer info (has a FROM radio)
+            if(ic != null)
+            {
+                if(fromRadio != null || currentEvent.getFromRadio() == null)
                 {
                     currentEvent.setIdentifierCollection(ic);
                 }
-                notifyEventUpdated(session, currentEvent);
-            }
-        }
-        else
-        {
-            // Different talker — create new per-talker event
-            CallSessionEvent previousEvent = session.getCurrentEvent();
-            if(previousEvent != null)
-            {
-                previousEvent.updateEnd(timestamp);
             }
 
-            Identifier toTalkgroup = extractToIdentifier(ic);
-            CallSessionEvent newEvent = createSessionEvent(session, fromRadio, toTalkgroup,
-                    eventType, ic, channelDescriptor, serviceOptions,
-                    null, session.getFrequency(), session.getTimeslot(), timestamp);
-            newEvent.setChannelSourceType(ChannelSourceType.CONTROL);
-            session.addEvent(newEvent);
-            notifyEventAdded(session, newEvent);
+            notifyEventUpdated(session, currentEvent);
         }
     }
 
@@ -1107,6 +1388,29 @@ public class P25CallSessionManager
         return label != null && label.contains("Encrypted");
     }
 
+    /**
+     * Upgrades a non-encrypted DecodeEventType to its encrypted counterpart.
+     * Returns the original type if already encrypted or no mapping exists.
+     */
+    private DecodeEventType upgradeToEncrypted(DecodeEventType type)
+    {
+        if(type == null)
+        {
+            return DecodeEventType.CALL_ENCRYPTED;
+        }
+
+        return switch(type)
+        {
+            case CALL_GROUP -> DecodeEventType.CALL_GROUP_ENCRYPTED;
+            case CALL_PATCH_GROUP -> DecodeEventType.CALL_PATCH_GROUP_ENCRYPTED;
+            case CALL_UNIT_TO_UNIT -> DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED;
+            case CALL_INTERCONNECT -> DecodeEventType.CALL_INTERCONNECT_ENCRYPTED;
+            case CALL -> DecodeEventType.CALL_ENCRYPTED;
+            case DATA_CALL -> DecodeEventType.DATA_CALL_ENCRYPTED;
+            default -> type; // Already encrypted or unknown — return as-is
+        };
+    }
+
     // ========================================================================
     // Session lifecycle transitions
     // ========================================================================
@@ -1117,6 +1421,49 @@ public class P25CallSessionManager
         mActiveSessions.remove(key);
         session.setState(CallState.ENDING);
         mEndingSessions.put(key + ":" + session.getSessionId(), session);
+
+        // Remove the cached Events tab event so a new call on this frequency creates a fresh row.
+        // Phase 1 control events are cached with timeslot 0, so try both keys.
+        mActiveControlEvents.remove(key);
+        if(session.getTimeslot() != 0)
+        {
+            mActiveControlEvents.remove(session.getFrequency() + ":0");
+        }
+    }
+
+    /**
+     * Checks mEndingSessions for a session matching the given frequency/timeslot/talkgroup
+     * and reactivates it if found (within the gap tolerance window). This handles the P25
+     * pattern where TDU transitions the session to ENDING, but the control channel continues
+     * sending grant updates for the same call (PTT release within a group call).
+     *
+     * @return the reactivated session, or null if no matching ENDING session was found
+     */
+    private CallSession reactivateFromEnding(long frequency, int timeslot, Identifier toTalkgroup,
+                                              Identifier fromRadio, long timestamp)
+    {
+        String keyPrefix = sessionKey(frequency, timeslot) + ":";
+
+        for(Iterator<Map.Entry<String, CallSession>> it = mEndingSessions.entrySet().iterator(); it.hasNext(); )
+        {
+            Map.Entry<String, CallSession> entry = it.next();
+            if(entry.getKey().startsWith(keyPrefix))
+            {
+                CallSession session = entry.getValue();
+                if(session.isMatch(frequency, timeslot, toTalkgroup, fromRadio, timestamp))
+                {
+                    // Reactivate: move back to active sessions
+                    it.remove();
+                    session.setState(CallState.ACTIVE);
+                    session.updateActivity(timestamp);
+                    String activeKey = sessionKey(frequency, timeslot);
+                    mActiveSessions.put(activeKey, session);
+                    return session;
+                }
+            }
+        }
+
+        return null;
     }
 
     private void finalizeSession(CallSession session)
@@ -1140,20 +1487,52 @@ public class P25CallSessionManager
         notifySessionComplete(session);
     }
 
+    /**
+     * Periodic cleanup of stale sessions. Runs every 500ms on a background thread.
+     *
+     * Checks both ACTIVE and ENDING sessions for staleness:
+     * - ACTIVE sessions with no activity beyond gap tolerance are finalized directly.
+     *   This is the primary mechanism for ending calls that naturally stop (the control
+     *   channel simply stops sending grant updates and the traffic channel sends TDU).
+     * - ENDING sessions (from explicit different-call transitions) are finalized after
+     *   the gap tolerance period.
+     */
     private void cleanupEndingSessions()
     {
         long now = System.currentTimeMillis();
-        Iterator<Map.Entry<String, CallSession>> iterator = mEndingSessions.entrySet().iterator();
 
-        while(iterator.hasNext())
+        // Check ACTIVE sessions for staleness — finalize if no activity beyond gap tolerance.
+        // This handles the normal call lifecycle: when neither the control channel nor the
+        // traffic channel sends further updates, the session is considered over.
+        Iterator<Map.Entry<String, CallSession>> activeIterator = mActiveSessions.entrySet().iterator();
+
+        while(activeIterator.hasNext())
         {
-            Map.Entry<String, CallSession> entry = iterator.next();
+            Map.Entry<String, CallSession> entry = activeIterator.next();
             CallSession session = entry.getValue();
             long gap = now - session.getLastActivityTimestamp();
 
             if(gap > mGapToleranceMs)
             {
-                iterator.remove();
+                activeIterator.remove();
+                finalizeSession(session);
+            }
+        }
+
+        // Check ENDING sessions for finalization (from explicit different-call transitions
+        // via transitionToEnding(), which is called when a different talkgroup starts on
+        // the same frequency/timeslot).
+        Iterator<Map.Entry<String, CallSession>> endingIterator = mEndingSessions.entrySet().iterator();
+
+        while(endingIterator.hasNext())
+        {
+            Map.Entry<String, CallSession> entry = endingIterator.next();
+            CallSession session = entry.getValue();
+            long gap = now - session.getLastActivityTimestamp();
+
+            if(gap > mGapToleranceMs)
+            {
+                endingIterator.remove();
                 finalizeSession(session);
             }
         }
@@ -1172,6 +1551,121 @@ public class P25CallSessionManager
     // Patch group support
     // ========================================================================
 
+    /**
+     * Unified cross-frequency session matching. Checks all active sessions on OTHER frequencies
+     * to find one that belongs to the same call. This handles:
+     *
+     * 1. PatchGroupIdentifier: supergroup or member TG overlap with seen talkgroups
+     * 2. Regular TalkgroupIdentifier: TG value already in any session's seenTalkgroups
+     * 3. Radio affinity: same FROM radio active in another session within 5 seconds
+     *
+     * This is the key fix for patch group calls opening multiple traffic channels: when
+     * grants arrive for patch member TGs BEFORE the PatchGroupManager has resolved them
+     * to PatchGroupIdentifiers, the radio affinity check catches them as the same call.
+     *
+     * @param toTalkgroup the TO identifier (may be TalkgroupIdentifier or PatchGroupIdentifier)
+     * @param fromRadio the FROM identifier (may be null)
+     * @param timestamp current timestamp for affinity checking
+     * @return the matching CallSession on another frequency, or null if none found
+     */
+    private CallSession findCrossFrequencySession(Identifier toTalkgroup, Identifier fromRadio, long timestamp)
+    {
+        // Check 1: PatchGroupIdentifier — supergroup or member overlap
+        if(toTalkgroup instanceof PatchGroupIdentifier pgi)
+        {
+            CallSession session = findSessionByPatchGroup(pgi);
+            if(session != null)
+            {
+                return session;
+            }
+        }
+
+        // Check 2: Regular TalkgroupIdentifier — check if the TG is already seen in any active session
+        if(toTalkgroup instanceof TalkgroupIdentifier tgi)
+        {
+            int tgId = tgi.getValue();
+            for(CallSession session : mActiveSessions.values())
+            {
+                if(session.hasSeenTalkgroup(tgId))
+                {
+                    return session;
+                }
+            }
+
+            // Check 2b: Consult PatchGroupManager — if this TG is a member of a known patch group,
+            // find sessions that have the supergroup or other members. This catches the case where
+            // member TG grants arrive for different TGs that are part of the same patch group,
+            // but the PatchGroupIdentifier hasn't been resolved in the IC yet.
+            if(mPatchGroupManager != null)
+            {
+                int supergroupId = mPatchGroupManager.getSupergroupId(tgId);
+                if(supergroupId > 0)
+                {
+                    for(CallSession session : mActiveSessions.values())
+                    {
+                        if(session.hasSeenTalkgroup(supergroupId))
+                        {
+                            return session;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check 3: Radio affinity — same FROM radio on another frequency within tolerance
+        if(fromRadio != null)
+        {
+            String radioStr = fromRadio.toString();
+            for(CallSession session : mActiveSessions.values())
+            {
+                if(session.isRadioAffiliated(radioStr, timestamp, 5000))
+                {
+                    return session;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Searches all active sessions for one that shares the same patch group as the given identifier.
+     * This enables cross-frequency session matching: when a member TG grant arrives on a different
+     * frequency, we can find the existing session for the supergroup on the original frequency.
+     *
+     * @param patchGroupIdentifier the patch group to match against
+     * @return the matching CallSession, or null if none found
+     */
+    private CallSession findSessionByPatchGroup(PatchGroupIdentifier patchGroupIdentifier)
+    {
+        if(patchGroupIdentifier == null)
+        {
+            return null;
+        }
+
+        int supergroupId = patchGroupIdentifier.getValue().getPatchGroup().getValue();
+
+        for(CallSession session : mActiveSessions.values())
+        {
+            // Check if the session's primary TG matches the supergroup
+            if(session.hasSeenTalkgroup(supergroupId))
+            {
+                return session;
+            }
+
+            // Check if any member TGs overlap
+            for(TalkgroupIdentifier member : patchGroupIdentifier.getValue().getPatchedTalkgroupIdentifiers())
+            {
+                if(session.hasSeenTalkgroup(member.getValue()))
+                {
+                    return session;
+                }
+            }
+        }
+
+        return null;
+    }
+
     public void setPatchGroupManager(PatchGroupManager patchGroupManager)
     {
         mPatchGroupManager = patchGroupManager;
@@ -1184,19 +1678,83 @@ public class P25CallSessionManager
             return;
         }
 
+        int supergroupId = patchGroup.getValue().getPatchGroup().getValue();
+        java.util.List<Integer> memberTgIds = new java.util.ArrayList<>();
+        memberTgIds.add(supergroupId);
+        for(TalkgroupIdentifier member : patchGroup.getValue().getPatchedTalkgroupIdentifiers())
+        {
+            memberTgIds.add(member.getValue());
+        }
+
+        // Find all active sessions that have any member TG of this patch group
+        java.util.List<CallSession> matchingSessions = new java.util.ArrayList<>();
         for(CallSession session : mActiveSessions.values())
         {
-            if(session.hasSeenTalkgroup(patchGroup.getValue().getPatchGroup().getValue()))
+            for(int tgId : memberTgIds)
             {
-                session.enrichPatchGroup(patchGroup);
+                if(session.hasSeenTalkgroup(tgId))
+                {
+                    matchingSessions.add(session);
+                    break;
+                }
             }
         }
 
+        // Enrich all matching sessions with patch group info
+        for(CallSession session : matchingSessions)
+        {
+            session.enrichPatchGroup(patchGroup);
+            // Add ALL member TGs to the session's seenTalkgroups so future grants match
+            for(int tgId : memberTgIds)
+            {
+                session.addSeenTalkgroupById(tgId);
+            }
+        }
+
+        // Consolidate: if multiple sessions matched, merge them into the oldest one
+        // and release traffic channels for the duplicates
+        if(matchingSessions.size() > 1)
+        {
+            // Sort by session start time — keep the oldest
+            matchingSessions.sort((a, b) -> Long.compare(a.getCallStart(), b.getCallStart()));
+            CallSession primary = matchingSessions.get(0);
+
+            for(int i = 1; i < matchingSessions.size(); i++)
+            {
+                CallSession duplicate = matchingSessions.get(i);
+                mLog.info("Consolidating duplicate patch session {} (freq={}) into primary session {} (freq={})",
+                        duplicate.getSessionId(), duplicate.getFrequency(),
+                        primary.getSessionId(), primary.getFrequency());
+
+                // Merge seen talkgroups into primary
+                for(int tgId : duplicate.getSeenTalkgroupIds())
+                {
+                    primary.addSeenTalkgroupById(tgId);
+                }
+
+                // Release the traffic channel for the duplicate's frequency
+                if(mTrafficChannelManager != null)
+                {
+                    mTrafficChannelManager.releaseTrafficChannel(duplicate.getFrequency());
+                }
+
+                // Remove from active sessions and finalize
+                String dupKey = sessionKey(duplicate.getFrequency(), duplicate.getTimeslot());
+                mActiveSessions.remove(dupKey);
+                finalizeSession(duplicate);
+            }
+        }
+
+        // Also enrich any ENDING sessions
         for(CallSession session : mEndingSessions.values())
         {
-            if(session.hasSeenTalkgroup(patchGroup.getValue().getPatchGroup().getValue()))
+            for(int tgId : memberTgIds)
             {
-                session.enrichPatchGroup(patchGroup);
+                if(session.hasSeenTalkgroup(tgId))
+                {
+                    session.enrichPatchGroup(patchGroup);
+                    break;
+                }
             }
         }
     }
@@ -1251,6 +1809,7 @@ public class P25CallSessionManager
             finalizeSession(session);
         }
         mEndingSessions.clear();
+        mActiveControlEvents.clear();
 
         mLog.info("P25CallSessionManager stopped");
     }
@@ -1272,6 +1831,29 @@ public class P25CallSessionManager
     // ========================================================================
     // Listener management
     // ========================================================================
+
+    /**
+     * Returns all CallSessionEvents from active and ending sessions. Used by CallSessionPanel
+     * to backfill the model when switching between channels (Fix 4: calls disappearing on click-away).
+     *
+     * @return list of all current session events (active + ending)
+     */
+    public List<CallSessionEvent> getActiveSessionEvents()
+    {
+        java.util.ArrayList<CallSessionEvent> events = new java.util.ArrayList<>();
+
+        for(CallSession session : mActiveSessions.values())
+        {
+            events.addAll(session.getEvents());
+        }
+
+        for(CallSession session : mEndingSessions.values())
+        {
+            events.addAll(session.getEvents());
+        }
+
+        return events;
+    }
 
     public void addListener(CallSessionListener listener)
     {

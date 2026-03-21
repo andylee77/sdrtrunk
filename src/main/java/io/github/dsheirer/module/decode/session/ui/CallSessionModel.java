@@ -282,6 +282,42 @@ public class CallSessionModel extends AbstractTableModel implements CallSessionL
     // CallSessionListener implementation
     // ========================================================================
 
+    /**
+     * Backfills the model with existing active session events. Called when switching
+     * back to a channel to restore live events that would otherwise be lost.
+     * Events are added newest-first to match the normal insertion order.
+     *
+     * @param events list of CallSessionEvents from active/ending sessions
+     */
+    public void backfillEvents(List<CallSessionEvent> events)
+    {
+        if(events == null || events.isEmpty())
+        {
+            return;
+        }
+
+        EventQueue.invokeLater(() -> {
+            // Sort events newest-first by start time so they appear in correct order
+            List<CallSessionEvent> sorted = new java.util.ArrayList<>(events);
+            sorted.sort((a, b) -> Long.compare(b.getTimeStart(), a.getTimeStart()));
+
+            for(CallSessionEvent event : sorted)
+            {
+                // Only add if not already present (avoid duplicates)
+                if(findEventIndex(event) < 0)
+                {
+                    mRows.addFirst(event);
+                    mHistoryStartIndex++;
+                }
+            }
+
+            if(!sorted.isEmpty())
+            {
+                fireTableDataChanged();
+            }
+        });
+    }
+
     @Override
     public void onSessionCreated(CallSession session)
     {

@@ -38,6 +38,7 @@ import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.session.P25CallSessionManager;
+import io.github.dsheirer.module.decode.session.CallSessionEvent;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
 import io.github.dsheirer.sample.Listener;
@@ -329,6 +330,14 @@ public class CallSessionPanel extends JPanel implements Listener<ProcessingChain
                         if(mCurrentSessionManager != null)
                         {
                             mCurrentSessionManager.addListener(mModel);
+
+                            // Backfill with existing active session events so they aren't lost
+                            // when clicking away and back (Fix 4: calls disappearing)
+                            List<CallSessionEvent> activeEvents = mCurrentSessionManager.getActiveSessionEvents();
+                            if(!activeEvents.isEmpty())
+                            {
+                                mModel.backfillEvents(activeEvents);
+                            }
                         }
 
                         // Load history from database

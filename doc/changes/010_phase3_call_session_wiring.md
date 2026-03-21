@@ -101,3 +101,80 @@ Traffic Channel Messages
   subsequent `reloadHistory()` call.
 - **Fix:** `CallSessionModel.clear()` now checks `EventQueue.isDispatchThread()` and executes immediately
   when already on the EDT via `clearImmediate()`.
+
+**Bug 3: Patch group members opening multiple traffic channels (2026-03-21 v2)**
+- **Root cause:** The cross-frequency patch group matching in `processPhase1Grant()` and
+  `processP2ChannelGrantInternal()` only worked when the TO identifier had been resolved to a
+  `PatchGroupIdentifier` by the `PatchGroupManager`. When initial grants arrived for patch member TGs
+  BEFORE the Motorola regroup TSBK defined the patch group (or after the 30s freshness expired), the
+  TGs stayed as regular `TalkgroupIdentifier` instances. The `instanceof PatchGroupIdentifier` check
+  failed, causing each member TG on each frequency to get its own session and traffic channel allocation.
+- **Fix:** Replaced the `PatchGroupIdentifier`-only cross-frequency check with a unified
+  `findCrossFrequencySession()` method that performs 3 checks:
+  1. **PatchGroupIdentifier**: supergroup or member TG overlap with any session's seenTalkgroups
+  2. **TalkgroupIdentifier**: TG value already tracked in any active session's seenTalkgroups
+  3. **Radio affinity**: same FROM radio active in another session within 5 seconds
+  This catches patch member grants even when the PatchGroupManager hasn't resolved them yet.
+- **Files changed:** `P25CallSessionManager.java`
+
+**Bug 8: Sessions never end — duration grows across separate calls on same TG/freq**
+- **Root cause:** `onTrafficChannelEnd()` was changed (Bug 7 fix) to NOT transition to ENDING,
+  to prevent splitting. But this meant sessions stayed in `mActiveSessions` indefinitely, kept
+  alive by periodic control channel grant updates. When a NEW call started on the same
+  talkgroup/frequency, `isMatch()` returned true (same TG, same freq) and the existing session's
+  duration kept growing — merging distinct calls into one ever-growing row. Traffic channels also
+  appeared stuck as ACTIVE in the Now Playing panel because the session never ended.
+- **Fix:** Restored `transitionToEnding()` in `onTrafficChannelEnd()` so TDU properly moves the
+  session from `mActiveSessions` to `mEndingSessions`. Added `reactivateFromEnding()` method that
+  checks `mEndingSessions` when a grant arrives and no active session exists on that freq/timeslot.
+  If a matching ENDING session is found (same TG within gap tolerance), it's reactivated back to
+  ACTIVE — this handles PTT releases within a group call where the control channel continues
+  sending grants. If no matching session is found or the gap tolerance expired, a new session is
+  created — this properly separates distinct calls. Wired reactivation into all three entry points:
+  `processChannelUpdate()`, `processPhase1Grant()`, and `processP2ChannelGrantInternal()`.
+- **Files changed:** `P25CallSessionManager.java`
+
+**Bug 4: Calls splitting into many short rows on Calls tab**
+- **Root cause:** Direct consequence of Bug 3. Each failed cross-frequency match created a new session,
+  and when the next grant arrived for a different TG on the same frequency, `transitionToEnding()` was
+  called on the old session, creating many 0.0-2.8 second rows instead of one continuous call.
+- **Fix:** Resolved by the same `findCrossFrequencySession()` fix in Bug 3. Member TG grants now update
+  the existing session instead of creating new ones.
+
+**Bug 5: "TS1" showing in Channel column for Phase 1 channels**
+- **Root cause:** `processPhase1Grant()` used `P25P1Message.TIMESLOT_1` (= 1) as the timeslot when
+  creating `CallSessionEvent` objects. `CallSessionEvent.hasTimeslot()` returned true for timeslot > 0,
+  and `CallSessionModel.formatChannel()` displayed "TS" + timeslot when `hasTimeslot()` was true. For
+  Phase 1 FDMA channels, the timeslot is meaningless (always 1).
+- **Fix:** Changed `createSessionEvent()` call in `processPhase1Grant()` to pass timeslot `0` for the
+  display event (the internal session key still uses `TIMESLOT_1` for map lookups). This causes
+  `hasTimeslot()` to return false and the Channel column displays just the channel descriptor (e.g.,
+  "0-949" instead of "0-949 TS1").
+- **Files changed:** `P25CallSessionManager.java`
+
+**Bug 6: Calls disappear when clicking away from channel and back**
+- **Root cause:** `CallSessionPanel.receive()` cleared the model and only registered for future events
+  via `addListener()`. There was no backfill of existing active session events, so all live rows were
+  lost when switching channels and returning.
+- **Fix:** Added `getActiveSessionEvents()` method to `P25CallSessionManager` that returns all
+  `CallSessionEvent` objects from active and ending sessions. Added `backfillEvents()` method to
+  `CallSessionModel` that bulk-inserts events (sorted newest-first, deduped by identity). Updated
+  `CallSessionPanel.receive()` to call `mModel.backfillEvents(activeEvents)` immediately after
+  registering as a listener.
+- **Files changed:** `P25CallSessionManager.java`, `CallSessionModel.java`, `CallSessionPanel.java`
+
+**Bug 7: Calls still splitting into many short rows — per-talker event creation**
+- **Root cause:** `updateSessionFromGrant()` used `isSameTalker()` to decide whether to create a new
+  `CallSessionEvent` row. Every time the FROM radio changed (e.g., 03599042 → null → 00001014),
+  it treated the change as a different talker and created a new row. Since control channel TSBKs
+  alternate between having a FROM radio ID and not having one, this split one continuous call into
+  5-10+ short-duration rows. The upstream `P25TrafficChannelManager` avoids this by using
+  `isSameCallCheckingToOnly()` which only checks the TO talkgroup and consolidates everything
+  into one event.
+- **Fix:** Changed `updateSessionFromGrant()` to always update the existing event — never create
+  new per-talker events. The FROM radio is updated when a new one is identified but preserved
+  when subsequent updates arrive without one (null FROM). Also fixed `onTrafficChannelUpdate()`
+  to protect the FROM radio identity from being overwritten by null-FROM traffic updates. Both
+  methods now only update the `IdentifierCollection` when the incoming IC has richer info (has
+  a FROM radio) or when the current event has no FROM radio yet.
+- **Files changed:** `P25CallSessionManager.java`

@@ -39,11 +39,30 @@ import java.util.stream.Collectors;
  * manager will replace that reference with the current state of the full patch group so that the call event has the
  * full patch group including all patched talkgroups or individual radios, which may not have been included in the
  * patch group reference on the control or traffic channel.
+ *
+ * Member talkgroups are also indexed in a reverse lookup map (member TG → supergroup ID) so that when a regular
+ * group voice channel grant arrives for a member TG, it can be resolved to its parent patch group. This ensures
+ * that member TG grants are correctly identified as patch calls rather than independent group calls.
  */
 public class PatchGroupManager
 {
     private static final long PATCH_GROUP_FRESHNESS_THRESHOLD_MS = Duration.ofSeconds(30).toMillis();
     private Map<Integer,PatchGroupTracker> mPatchGroupTrackerMap = new HashMap<>();
+    // Reverse lookup: member TG ID → supergroup ID, so member TGs can be resolved to their patch group
+    private Map<Integer,Integer> mMemberToSupergroupMap = new HashMap<>();
+
+    /**
+     * Resolves a talkgroup ID to its supergroup ID if it is a known member of an active patch group.
+     * Returns -1 if the talkgroup is not a member of any known patch group.
+     *
+     * @param talkgroupId the talkgroup ID to resolve
+     * @return the supergroup ID, or -1 if not a member
+     */
+    public synchronized int getSupergroupId(int talkgroupId)
+    {
+        Integer supergroupId = mMemberToSupergroupMap.get(talkgroupId);
+        return supergroupId != null ? supergroupId : -1;
+    }
 
     /**
      * Constructs an instance
@@ -77,11 +96,12 @@ public class PatchGroupManager
     }
 
     /**
-     * Clears any existing patch groups
+     * Clears any existing patch groups and reverse lookup entries
      */
     public void clear()
     {
         mPatchGroupTrackerMap.clear();
+        mMemberToSupergroupMap.clear();
     }
 
     /**
@@ -89,6 +109,8 @@ public class PatchGroupManager
      * managed, the new patch group argument is checked for additional patched talkgroups and they are added to the
      * existing managed patch group.  Where the patch group version (super group sequence number) is different, the
      * existing patch group is discarded and replaced with the updated version of the patch group.
+     *
+     * Also maintains the reverse lookup map (member TG → supergroup) for member TG resolution.
      *
      * @param patchGroupIdentifier to add or update
      * @return true if the group was added or updated
@@ -101,6 +123,12 @@ public class PatchGroupManager
 
         if(patchGroup > 0)
         {
+            // Update reverse lookup map: member TG → supergroup
+            for(TalkgroupIdentifier member : update.getPatchedTalkgroupIdentifiers())
+            {
+                mMemberToSupergroupMap.put(member.getValue(), patchGroup);
+            }
+
             if(mPatchGroupTrackerMap.containsKey(patchGroup))
             {
                 PatchGroupTracker tracker = mPatchGroupTrackerMap.get(patchGroup);
@@ -113,8 +141,14 @@ public class PatchGroupManager
                 }
                 else
                 {
-                    //Update the existing patch group.
-                    return tracker.add(patchGroupIdentifier, timestamp);
+                    //Update the existing patch group — also update reverse map for any new members
+                    boolean added = tracker.add(patchGroupIdentifier, timestamp);
+                    PatchGroupIdentifier current = tracker.getPatchGroupIdentifier(timestamp);
+                    for(TalkgroupIdentifier member : current.getValue().getPatchedTalkgroupIdentifiers())
+                    {
+                        mMemberToSupergroupMap.put(member.getValue(), patchGroup);
+                    }
+                    return added;
                 }
             }
             else
@@ -144,6 +178,7 @@ public class PatchGroupManager
 
     /**
      * Removes the patch group from this manager if it is currently being managed.
+     * Also cleans up reverse lookup entries for all member TGs.
      *
      * @param patchGroupIdentifier to remove
      * @return true if the patch group was removed.
@@ -151,6 +186,17 @@ public class PatchGroupManager
     public synchronized boolean removePatchGroup(PatchGroupIdentifier patchGroupIdentifier)
     {
         int id = patchGroupIdentifier.getValue().getPatchGroup().getValue();
+
+        // Remove reverse lookup entries for all member TGs of this patch group
+        PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
+        if(tracker != null)
+        {
+            for(TalkgroupIdentifier member : tracker.mPatchGroupIdentifier.getValue().getPatchedTalkgroupIdentifiers())
+            {
+                mMemberToSupergroupMap.remove(member.getValue());
+            }
+        }
+
         return mPatchGroupTrackerMap.remove(id) != null;
     }
 
@@ -188,8 +234,15 @@ public class PatchGroupManager
     }
 
     /**
-     * Checks the PATCH GROUP identifier and replaces the identifier with the current patch group
-     * if the identifier matches a currently managed patch group.
+     * Checks the identifier and replaces it with the current patch group if the identifier matches a currently
+     * managed patch group — either as a supergroup ID or as a member talkgroup.
+     *
+     * For TALKGROUP identifiers:
+     *   1. First checks if the TG is a supergroup ID (existing behavior)
+     *   2. Then checks the reverse lookup to see if it's a member of an active patch group (new behavior)
+     *
+     * For PATCH_GROUP identifiers:
+     *   Returns the current tracked version of the patch group if available.
      *
      * @param identifier for a talkgroup or a patch group.
      * @param referenceTimestamp as a reference for checking staleness of existing patch groups.
@@ -206,6 +259,7 @@ public class PatchGroupManager
                     {
                         int id = talkgroupIdentifier.getValue();
 
+                        // First check: is this TG a supergroup ID?
                         PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
 
                         if(tracker != null)
@@ -218,6 +272,31 @@ public class PatchGroupManager
                             {
                                 //Perform substitution - return patch group instead of the original talkgroup
                                 return tracker.getPatchGroupIdentifier(referenceTimestamp);
+                            }
+                        }
+
+                        // Second check: is this TG a member of an active patch group?
+                        Integer supergroupId = mMemberToSupergroupMap.get(id);
+                        if(supergroupId != null)
+                        {
+                            PatchGroupTracker supergroupTracker = mPatchGroupTrackerMap.get(supergroupId);
+                            if(supergroupTracker != null)
+                            {
+                                if(supergroupTracker.isStale(referenceTimestamp))
+                                {
+                                    mPatchGroupTrackerMap.remove(supergroupId);
+                                    mMemberToSupergroupMap.remove(id);
+                                }
+                                else
+                                {
+                                    //Perform substitution - return the parent patch group for this member TG
+                                    return supergroupTracker.getPatchGroupIdentifier(referenceTimestamp);
+                                }
+                            }
+                            else
+                            {
+                                //Supergroup no longer tracked — clean up stale reverse entry
+                                mMemberToSupergroupMap.remove(id);
                             }
                         }
                     }

@@ -367,6 +367,26 @@ public class CallSession
     }
 
     /**
+     * Returns the set of seen talkgroup IDs (alias for getSeenTalkgroups).
+     */
+    public Set<Integer> getSeenTalkgroupIds()
+    {
+        return Collections.unmodifiableSet(mSeenTalkgroups);
+    }
+
+    /**
+     * Adds a raw talkgroup ID to the set of seen talkgroups.
+     * Used by patch group consolidation to merge member TGs between sessions.
+     */
+    public void addSeenTalkgroupById(int talkgroupId)
+    {
+        if(talkgroupId > 0)
+        {
+            mSeenTalkgroups.add(talkgroupId);
+        }
+    }
+
+    /**
      * Checks if a talkgroup ID has been seen in this session.
      */
     public boolean hasSeenTalkgroup(int talkgroupId)
