@@ -235,6 +235,23 @@ Extensive work documents accumulated in `C:\Users\Andy\Projects\SDRTrunk\work_do
 
 ---
 
+## [2026-03-21] Change 010 Phase 4: Event Broadcasting Consolidation
+
+### Modified Files (2)
+- `module/decode/p25/P25TrafficChannelManager.java` -- Removed `broadcast(tracker)` from 13 traffic-side methods; traffic methods still update tracker state and forward to CSM but no longer broadcast to Events tab
+- `module/decode/p25/session/P25CallSessionManager.java` -- Added `broadcastTrafficUpdate()` method that re-broadcasts cached control event with updated duration/identifiers; called at end of `onTrafficChannelUpdate()`
+
+### Behavior
+- CSM is now sole authority for Events tab broadcasting (eliminates duplicate rows)
+- Control-side broadcasting in TCM preserved (channel allocation, initial event creation)
+- Traffic updates flow: TCM updates tracker (no broadcast) -> CSM.onTrafficChannelUpdate() -> CSM.broadcastTrafficUpdate() re-broadcasts cached control event with current duration/IDs
+- Handles P1 timeslot mismatch (control=0, traffic=1) with fallback key lookup
+
+### Documentation
+- `doc/changes/010_phase4_event_consolidation.md` -- Detailed change doc
+
+---
+
 ## Pending / Future
 
 - [ ] Finalize PlutoSDR tuner integration with Maia IQ streaming
