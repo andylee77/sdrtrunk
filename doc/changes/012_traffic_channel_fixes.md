@@ -78,11 +78,56 @@ The CSM receives notifications from TCM in two ways:
 - `src/main/java/io/github/dsheirer/module/decode/p25/phase2/P25P2DecoderState.java`
 - `src/main/java/io/github/dsheirer/module/decode/p25/P25TrafficChannelManager.java`
 
+## CSM Cleanup (completed)
+
+Removed dead code from P25CallSessionManager that was left over from the Phase 3/4
+architecture where CSM tried to own Events tab broadcasting and traffic channel allocation.
+After fix 012 reverted those responsibilities to TCM, this code became unreachable since
+`mDecodeEventListener` was never set (commented out in TCM's `addDecodeEventListener()`).
+
+### Removed from CSM (~400 lines)
+
+**Dead fields:**
+- `mDecodeEventListener` — never set (TCM commented out the wiring)
+- `mActiveControlEvents` map — only used by dead broadcast methods
+
+**Dead methods:**
+- `broadcastControlGrantEvent()` — Events tab broadcasting (TCM owns this)
+- `broadcastTrafficUpdate()` — Events tab traffic updates (TCM owns this)
+- `processP2DataChannel()` — never called externally (P25P1DecoderState calls TCM's version)
+- `processP2ChannelGrant()` — never called externally (P2 grants go through TCM)
+- `processP2ChannelUpdate()` — never called externally (P2 updates go through TCM)
+- `setDecodeEventListener()` — never called (commented out in TCM)
+- `onDecodeEvent()` — deprecated no-op
+
+**Dead code within remaining methods:**
+- All `mTrafficChannelManager.allocatePhase1TrafficChannel()` calls (TCM already allocates)
+- All `mTrafficChannelManager.allocatePhase2TrafficChannel()` calls (TCM already allocates)
+- All `broadcastControlGrantEvent()` calls within grant processing
+- All `mActiveControlEvents` cache lookups/updates in `processChannelUpdate()` and
+  `onTrafficChannelUpdate()`
+- `mActiveControlEvents` cleanup in `transitionToEnding()`, `finalizeSession()`, `stop()`
+
+**Refactored:**
+- `transitionToEnding()` simplified — removed `clearCachedEvent` parameter (was for
+  `mActiveControlEvents` management)
+- Added `tagSessionIgnored()` helper to consolidate duplicate "IGNORED" tagging logic
+- Updated class javadoc to clearly describe CSM as session tracking only
+
+### Cleaned up in TCM
+
+- Removed commented-out `mCallSessionManager.setDecodeEventListener(listener)` code block
+  from `addDecodeEventListener()`
+
+### Result
+
+CSM reduced from ~1000 lines to ~600 lines. Clean separation of concerns:
+- **TCM**: Events tab, traffic channel pool, tracker maps, event broadcasting
+- **CSM**: Session lifecycle, Calls tab, call log DB
+
 ## Future Work
 
-- **P2 channel grant forwarding**: The P2 control methods (`processP2ChannelGrant`,
-  `processP2ChannelUpdate`) don't yet forward to CSM. Add when testing Phase 2 systems.
+- **P2 channel grant forwarding**: The P2 control methods in TCM don't yet forward to
+  CSM. Add when testing Phase 2 systems.
 - **Patch call consolidation**: Detect same radio ID granted to multiple talk groups
   (Motorola LSM implicit patches), consolidate to single audio channel.
-- **CSM cleanup**: Remove now-unused `broadcastControlGrantEvent()` and
-  `allocatePhase1TrafficChannel()` from CSM since TCM handles those.

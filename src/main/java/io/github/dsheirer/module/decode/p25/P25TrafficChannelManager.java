@@ -2140,14 +2140,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     public void addDecodeEventListener(Listener<IDecodeEvent> listener)
     {
         mDecodeEventListener = listener;
-
-        // Also wire the decode event listener to the call session manager so it can
-        // broadcast P25ChannelGrantEvents for the Events tab
-        if(mCallSessionManager != null)
-        {
-            // CSM no longer broadcasts events - TCM owns Events tab exclusively
-            // mCallSessionManager.setDecodeEventListener(listener);
-        }
     }
 
     /**
