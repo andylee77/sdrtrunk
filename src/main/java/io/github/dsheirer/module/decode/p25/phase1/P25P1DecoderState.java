@@ -208,6 +208,10 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         {
             mTrafficChannelManager = trafficChannelManager;
             mChannelEventListener = trafficChannelManager.getChannelEventListener();
+
+            // Share the PatchGroupManager with the CSM so it can resolve member TGs
+            // to supergroups during cross-frequency session matching
+            trafficChannelManager.getCallSessionManager().setPatchGroupManager(mPatchGroupManager);
         }
         else
         {
@@ -321,7 +325,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         else if(iMessage instanceof MotorolaTalkerAliasComplete tac && tac.isValid())
         {
             mTrafficChannelManager.getTalkerAliasManager().update(tac.getRadio(), tac.getAlias());
-            mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), tac.getAlias(), tac.getTimestamp(), tac.toString());
+            mTrafficChannelManager.getCallSessionManager().onTrafficChannelUpdate(getCurrentFrequency(), P25P1Message.TIMESLOT_1, getIdentifierCollection(), tac.getTimestamp());
         }
         else if(iMessage instanceof LCHarrisTalkerAliasComplete talkerAlias)
         {
@@ -346,7 +350,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             mTrafficChannelManager.getTalkerAliasManager().update(radioIdentifier, talkerAlias.getTalkerAlias());
         }
 
-        mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), talkerAlias.getTalkerAlias(), talkerAlias.getTimestamp(), talkerAlias.toString());
+        mTrafficChannelManager.getCallSessionManager().onTrafficChannelUpdate(getCurrentFrequency(), P25P1Message.TIMESLOT_1, getIdentifierCollection(), talkerAlias.getTimestamp());
     }
 
     /**
@@ -432,8 +436,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
         mTrafficChannelManager.getTalkerAliasManager().enrichMutable(getIdentifierCollection());
         MutableIdentifierCollection mic = getMutableIdentifierCollection(getIdentifierCollection().getIdentifiers(), timestamp);
-        mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), getCurrentChannel(), decodeEventType,
-                serviceOptions, mic, timestamp, null, lcw.toString());
+        mTrafficChannelManager.getCallSessionManager().onTrafficChannelUpdate(getCurrentFrequency(), P25P1Message.TIMESLOT_1, mic, timestamp);
 
         if(serviceOptions.isEncrypted())
         {
@@ -846,8 +849,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
                 Identifier<?> radio = getIdentifierCollection().getFromIdentifier();
 
-                mTrafficChannelManager.processP1TrafficCallStart(getCurrentFrequency(), talkgroup, radio,
-                        headerData.getEncryptionKey(), mCurrentServiceOptions, getCurrentChannel(), message.getTimestamp());
+                mTrafficChannelManager.getCallSessionManager().onTrafficChannelUpdate(getCurrentFrequency(), P25P1Message.TIMESLOT_1, getIdentifierCollection(), message.getTimestamp());
 
                 if(headerData.isEncryptedAudio())
                 {
@@ -877,8 +879,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             if(lcw != null && lcw.isValid())
             {
                 processLC(lcw, message.getTimestamp(), false);
-                mTrafficChannelManager.processP1TrafficLDU1(getCurrentFrequency(),
-                        getIdentifierCollection().getIdentifiers(), message.getTimestamp(), ldu1.toString());
+                mTrafficChannelManager.getCallSessionManager().onTrafficChannelUpdate(getCurrentFrequency(), P25P1Message.TIMESLOT_1, getIdentifierCollection(), message.getTimestamp());
             }
         }
         else if(message instanceof LDU2Message ldu2)
@@ -891,15 +892,13 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
                 if(esp.isEncryptedAudio())
                 {
-                    mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), esp.getEncryptionKey(),
-                            message.getTimestamp(), ldu2.toString());
+                    mTrafficChannelManager.getCallSessionManager().onTrafficChannelUpdate(getCurrentFrequency(), P25P1Message.TIMESLOT_1, getIdentifierCollection(), message.getTimestamp());
                     broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.ENCRYPTED));
                 }
                 else
                 {
                     getIdentifierCollection().remove(Form.ENCRYPTION_KEY);
-                    mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), null,
-                            message.getTimestamp(), ldu2.toString());
+                    mTrafficChannelManager.getCallSessionManager().onTrafficChannelUpdate(getCurrentFrequency(), P25P1Message.TIMESLOT_1, getIdentifierCollection(), message.getTimestamp());
                     broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CALL));
                 }
             }
@@ -911,7 +910,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
      */
     private void processTDU(P25P1Message message)
     {
-        mTrafficChannelManager.processP1TrafficCallEnd(getCurrentFrequency(), message.getTimestamp(), "TDU:" + message);
+        mTrafficChannelManager.getCallSessionManager().onTrafficChannelEnd(getCurrentFrequency(), P25P1Message.TIMESLOT_1, message.getTimestamp());
         broadcast(new DecoderStateEvent(this, Event.DECODE, State.ACTIVE));
     }
 
@@ -929,7 +928,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
             if(lcw != null && lcw.isValid())
             {
-                mTrafficChannelManager.processP1TrafficCallEnd(getCurrentFrequency(), message.getTimestamp(), "TDULC:" + message);
+                mTrafficChannelManager.getCallSessionManager().onTrafficChannelEnd(getCurrentFrequency(), P25P1Message.TIMESLOT_1, message.getTimestamp());
                 broadcast(new DecoderStateEvent(this, Event.DECODE, State.ACTIVE));
                 processLC(lcw, message.getTimestamp(), true);
             }
@@ -1347,6 +1346,14 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 //MOTOROLA PATCH GROUP OPCODES
                 case MOTOROLA_OSP_GROUP_REGROUP_ADD:
                     mPatchGroupManager.addPatchGroups(tsbk.getIdentifiers(), message.getTimestamp());
+                    // Notify CSM so it can consolidate duplicate sessions for patch members
+                    for(Identifier id : tsbk.getIdentifiers())
+                    {
+                        if(id instanceof PatchGroupIdentifier pgi)
+                        {
+                            mTrafficChannelManager.getCallSessionManager().onPatchGroupUpdate(pgi);
+                        }
+                    }
                     break;
                 case MOTOROLA_OSP_GROUP_REGROUP_DELETE:
                     mPatchGroupManager.removePatchGroups(tsbk.getIdentifiers());
@@ -1550,7 +1557,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         if(tsbk instanceof MotorolaExplicitTDMADataChannelAnnouncement tdma && tdma.hasChannel())
         {
-            mTrafficChannelManager.processP2DataChannel(tdma.getChannel(), tsbk.getTimestamp());
+            mTrafficChannelManager.getCallSessionManager().processP2DataChannel(tdma.getChannel(), tsbk.getTimestamp());
             mNetworkConfigurationMonitor.process(tsbk);
         }
     }
@@ -2081,7 +2088,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             case MOTOROLA_UNIT_GPS:
                 if(lcw instanceof LCMotorolaUnitGPS gps)
                 {
-                    mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), gps.getLocation(), timestamp, lcw.toString());
+                    mTrafficChannelManager.getCallSessionManager().onTrafficChannelUpdate(getCurrentFrequency(), P25P1Message.TIMESLOT_1, getIdentifierCollection(), timestamp);
 
                     //We want to preserve the current TO/FROM and any other identifiers for the GPS event and add the GPS location
                     MutableIdentifierCollection mic = new MutableIdentifierCollection(getIdentifierCollection().getIdentifiers());
@@ -2101,7 +2108,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             case L3HARRIS_TALKER_GPS_COMPLETE:
                 if(lcw instanceof LCHarrisTalkerGPSComplete gps)
                 {
-                    mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), gps.getLocation(), timestamp, lcw.toString());
+                    mTrafficChannelManager.getCallSessionManager().onTrafficChannelUpdate(getCurrentFrequency(), P25P1Message.TIMESLOT_1, getIdentifierCollection(), timestamp);
 
                     //We want to preserve the current TO/FROM and any other identifiers for the GPS event and add the GPS location
                     MutableIdentifierCollection mic = new MutableIdentifierCollection(getIdentifierCollection().getIdentifiers());

@@ -190,7 +190,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     protected void resetState()
     {
         super.resetState();
-        mTrafficChannelManager.processP2TrafficCallEnd(getCurrentFrequency(), getTimeslot(), System.currentTimeMillis(), "RESET STATE INVOKED");
+        mTrafficChannelManager.getCallSessionManager().onTrafficChannelEnd(getCurrentFrequency(), getTimeslot(), System.currentTimeMillis());
         mEndPttOnFacchCounter = 0;
     }
 
@@ -239,7 +239,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 }
 
                 //If we're tracking the call event, update the duration on it
-                mTrafficChannelManager.processP2TrafficVoice(getCurrentFrequency(), getTimeslot(), message.getTimestamp());
+                mTrafficChannelManager.getCallSessionManager().onTrafficChannelUpdate(getCurrentFrequency(), getTimeslot(), getIdentifierCollection(), message.getTimestamp());
             }
             //Motorola TDMA data channel.
             else if(message instanceof DatchTimeslot)
@@ -251,7 +251,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 //We don't send any state events for this message since it can only occur in conjunction with
                 //an audio frame that already sends the call state event
                 getIdentifierCollection().update(message.getIdentifiers());
-                mTrafficChannelManager.processP2TrafficCurrentUser(getCurrentFrequency(), getTimeslot(), ess.getEncryptionKey(), ess.getTimestamp());
+                mTrafficChannelManager.getCallSessionManager().onTrafficChannelUpdate(getCurrentFrequency(), getTimeslot(), getIdentifierCollection(), ess.getTimestamp());
 
                 if(ess.isEncrypted())
                 {
@@ -1112,14 +1112,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         {
             if(mac instanceof IServiceOptionsProvider sop)
             {
-                IChannelDescriptor currentChannel = mTrafficChannelManager.processP2TrafficCurrentUser(getCurrentFrequency(),
-                        getTimeslot(), getCurrentChannel(), sop.getServiceOptions(), mac.getOpcode(),
-                        getIdentifierCollection().copyOf(), message.getTimestamp(), null, message.toString());
-
-                if(getCurrentChannel() == null)
-                {
-                    setCurrentChannel(currentChannel);
-                }
+                mTrafficChannelManager.getCallSessionManager().onTrafficChannelUpdate(getCurrentFrequency(), getTimeslot(), getIdentifierCollection(), message.getTimestamp());
 
                 if(sop.getServiceOptions().isEncrypted())
                 {
@@ -1158,12 +1151,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         {
             VoiceServiceOptions vso = ptt.isEncrypted() ? VoiceServiceOptions.createEncrypted() : VoiceServiceOptions.createUnencrypted();
 
-            //First TCM call creates the tracked event and second call starts the call and updates the duration
-            mTrafficChannelManager.processP2TrafficCurrentUser(getCurrentFrequency(), getTimeslot(), getCurrentChannel(), vso,
-                    mac.getOpcode(), getIdentifierCollection().copyOf(), message.getTimestamp(),
-                    ptt.isEncrypted() ? ptt.getEncryptionKey().toString() : null, message.toString());
-
-            mTrafficChannelManager.processP2TrafficVoice(getCurrentFrequency(), getTimeslot(), message.getTimestamp());
+            mTrafficChannelManager.getCallSessionManager().onTrafficChannelUpdate(getCurrentFrequency(), getTimeslot(), getIdentifierCollection(), message.getTimestamp());
 
             broadcast(new DecoderStateEvent(this, Event.START, ptt.isEncrypted() ? State.ENCRYPTED : State.CALL, getTimeslot()));
         }
@@ -1228,11 +1216,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
 
             //Only reset the identifiers if the call event is closed out, otherwise we might have a timing issue
             //between the control channel and the traffic channel.
-            if(mTrafficChannelManager.processP2TrafficEndPushToTalk(getCurrentFrequency(), getTimeslot(),
-                    message.getTimestamp(), "END PUSH TO TALK - " + message))
-            {
-                getIdentifierCollection().remove(IdentifierClass.USER);
-            }
+            mTrafficChannelManager.getCallSessionManager().onTrafficChannelEnd(getCurrentFrequency(), getTimeslot(), message.getTimestamp());
+            getIdentifierCollection().remove(IdentifierClass.USER);
 
             if(message.getDataUnitID().isFACCH())
             {
@@ -1488,8 +1473,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     .build();
             broadcast(decodeEvent);
             mTrafficChannelManager.broadcast(decodeEvent);
-            mTrafficChannelManager.processP2TrafficCurrentUser(getCurrentFrequency(), getTimeslot(), gps.getLocation(),
-                    message.getTimestamp());
+            mTrafficChannelManager.getCallSessionManager().onTrafficChannelUpdate(getCurrentFrequency(), getTimeslot(), getIdentifierCollection(), message.getTimestamp());
         }
     }
 
@@ -1517,7 +1501,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     {
         if(mac instanceof MacRelease mr)
         {
-            mTrafficChannelManager.processP2TrafficCallEnd(getCurrentFrequency(), getTimeslot(), message.getTimestamp(), "MAC RELEASE: " + mac.toString());
+            mTrafficChannelManager.getCallSessionManager().onTrafficChannelEnd(getCurrentFrequency(), getTimeslot(), message.getTimestamp());
             getIdentifierCollection().remove(IdentifierClass.USER);
             broadcast(message, mac, DecodeEventType.COMMAND,
                     (mr.isForcedPreemption() ? "FORCED " : "") + "CALL PREEMPTION" +
@@ -1721,7 +1705,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         {
             P25TalkerAliasIdentifier alias = talkerAlias.getAlias();
             getIdentifierCollection().update(alias);
-            mTrafficChannelManager.processP2TrafficCurrentUser(getCurrentFrequency(), getTimeslot(), alias, message.getTimestamp());
+            mTrafficChannelManager.getCallSessionManager().onTrafficChannelUpdate(getCurrentFrequency(), getTimeslot(), getIdentifierCollection(), message.getTimestamp());
 
             //Add the alias to the talker alias manager if we know the associated radio
             Identifier from = getIdentifierCollection().getFromIdentifier();

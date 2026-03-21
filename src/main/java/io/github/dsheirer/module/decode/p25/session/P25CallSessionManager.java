@@ -34,7 +34,6 @@ import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupManager;
 import io.github.dsheirer.identifier.scramble.ScrambleParameterIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
-import io.github.dsheirer.log.LoggingSuppressor;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
@@ -89,7 +88,6 @@ import org.slf4j.LoggerFactory;
 public class P25CallSessionManager
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25CallSessionManager.class);
-    private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(mLog);
 
     /** Active sessions keyed by "frequency:timeslot" */
     private final Map<String, CallSession> mActiveSessions = new ConcurrentHashMap<>();
@@ -218,7 +216,7 @@ public class P25CallSessionManager
 
         try
         {
-            DecodeEventType decodeEventType = getEventType(opcode, serviceOptions, null);
+            DecodeEventType decodeEventType = P25DecodeEventTypeResolver.resolve(opcode, serviceOptions, null);
             boolean isDataGrant = opcode != null && opcode.isDataChannelGrant();
 
             if(apco25Channel.isTDMAChannel())
@@ -321,7 +319,7 @@ public class P25CallSessionManager
 
         try
         {
-            DecodeEventType decodeEventType = getEventType(macOpcode, serviceOptions, null);
+            DecodeEventType decodeEventType = P25DecodeEventTypeResolver.resolve(macOpcode, serviceOptions, null);
             boolean isDataGrant = macOpcode.isDataChannelGrant();
 
             if(apco25Channel.isTDMAChannel())
@@ -461,7 +459,7 @@ public class P25CallSessionManager
             // Check BOTH ServiceOptions AND session's encryption state (may have been upgraded
             // by traffic channel detection via onTrafficChannelUpdate).
             boolean sessionEncrypted = (serviceOptions != null && serviceOptions.isEncrypted())
-                    || isEncryptedEventType(broadcastType);
+                    || P25DecodeEventTypeResolver.isEncryptedEventType(broadcastType);
 
             // Determine if this is an ignored call — skip traffic channel but still update session
             boolean ignored = false;
@@ -670,7 +668,7 @@ public class P25CallSessionManager
 
             DecodeEventType broadcastType = existing.getEventType() != null ? existing.getEventType() : decodeEventType;
             boolean sessionEncrypted = (serviceOptions != null && serviceOptions.isEncrypted())
-                    || isEncryptedEventType(broadcastType);
+                    || P25DecodeEventTypeResolver.isEncryptedEventType(broadcastType);
 
             boolean ignored = false;
             String ignoredPrefix = "";
@@ -804,6 +802,59 @@ public class P25CallSessionManager
     }
 
     // ========================================================================
+    // Phase 4: Data Channel Processing (moved from TCM)
+    // ========================================================================
+
+    /**
+     * Process a Motorola TDMA data channel announcement. Converts the P2 channel to P1
+     * and allocates a traffic channel for the data session.
+     *
+     * @param apco25Channel the TDMA data channel
+     * @param timestamp of the message
+     */
+    public void processP2DataChannel(APCO25Channel apco25Channel, long timestamp)
+    {
+        if(!mRunning || apco25Channel == null || apco25Channel.getDownlinkFrequency() <= 0)
+        {
+            return;
+        }
+
+        try
+        {
+            // Data channels are always Phase 1 (FDMA) even when announced via TDMA signaling
+            APCO25Channel phase1Channel = P25TrafficChannelManager.convertPhase2ToPhase1Channel(apco25Channel);
+            long frequency = phase1Channel.getDownlinkFrequency();
+
+            if(mIgnoreDataCalls)
+            {
+                broadcastControlGrantEvent(DecodeEventType.DATA_CALL, null, phase1Channel,
+                        new MutableIdentifierCollection(), 0,
+                        "IGNORED: MOTOROLA TDMA DATA CHANNEL", timestamp);
+                return;
+            }
+
+            if(mTrafficChannelManager != null && !mTrafficChannelManager.isTrafficChannelAllocated(frequency))
+            {
+                Channel trafficChannel = mTrafficChannelManager.allocatePhase1TrafficChannel(
+                        phase1Channel, new MutableIdentifierCollection(), timestamp);
+
+                String details = "MOTOROLA TDMA DATA CHANNEL";
+                if(trafficChannel == null)
+                {
+                    details = P25TrafficChannelManager.MAX_TRAFFIC_CHANNELS_EXCEEDED + " - " + details;
+                }
+
+                broadcastControlGrantEvent(DecodeEventType.DATA_CALL, null, phase1Channel,
+                        new MutableIdentifierCollection(), 0, details, timestamp);
+            }
+        }
+        catch(Exception e)
+        {
+            mLog.error("Error processing P2 data channel", e);
+        }
+    }
+
+    // ========================================================================
     // Phase 3: Traffic-Side Forwarding
     // ========================================================================
 
@@ -850,9 +901,9 @@ public class P25CallSessionManager
                 session.setEncryption(eki);
 
                 // Upgrade the session and event type to encrypted variant
-                if(!isEncryptedEventType(session.getEventType()))
+                if(!P25DecodeEventTypeResolver.isEncryptedEventType(session.getEventType()))
                 {
-                    DecodeEventType upgradedType = upgradeToEncrypted(session.getEventType());
+                    DecodeEventType upgradedType = P25DecodeEventTypeResolver.upgradeToEncrypted(session.getEventType());
                     session.setEventType(upgradedType);
 
                     CallSessionEvent currentEvent = session.getCurrentEvent();
@@ -1088,126 +1139,6 @@ public class P25CallSessionManager
 
 
     /**
-     * Creates a call event type description for the specified opcode and service options.
-     * Moved from P25TrafficChannelManager.
-     */
-    DecodeEventType getEventType(Opcode opcode, ServiceOptions serviceOptions, DecodeEventType current)
-    {
-        boolean encrypted = serviceOptions != null && serviceOptions.isEncrypted();
-
-        DecodeEventType type = null;
-
-        if(opcode != null)
-        {
-            type = switch(opcode)
-            {
-                case OSP_GROUP_VOICE_CHANNEL_GRANT, OSP_GROUP_VOICE_CHANNEL_GRANT_UPDATE,
-                     OSP_GROUP_VOICE_CHANNEL_GRANT_UPDATE_EXPLICIT ->
-                        encrypted ? DecodeEventType.CALL_GROUP_ENCRYPTED : DecodeEventType.CALL_GROUP;
-                case OSP_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT, OSP_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT_UPDATE ->
-                        encrypted ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED : DecodeEventType.CALL_UNIT_TO_UNIT;
-                case OSP_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT,
-                     OSP_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT_UPDATE ->
-                        encrypted ? DecodeEventType.CALL_INTERCONNECT_ENCRYPTED : DecodeEventType.CALL_INTERCONNECT;
-                case OSP_SNDCP_DATA_CHANNEL_GRANT, OSP_GROUP_DATA_CHANNEL_GRANT, OSP_INDIVIDUAL_DATA_CHANNEL_GRANT ->
-                        encrypted ? DecodeEventType.DATA_CALL_ENCRYPTED : DecodeEventType.DATA_CALL;
-                case MOTOROLA_OSP_GROUP_REGROUP_CHANNEL_GRANT, MOTOROLA_OSP_GROUP_REGROUP_CHANNEL_UPDATE ->
-                        encrypted ? DecodeEventType.CALL_PATCH_GROUP_ENCRYPTED : DecodeEventType.CALL_PATCH_GROUP;
-                default -> type;
-            };
-        }
-
-        if(type == null)
-        {
-            type = current;
-            if(opcode != null)
-            {
-                LOGGING_SUPPRESSOR.error(opcode.name(), 2, "Unrecognized opcode for determining decode " +
-                        "event type: " + opcode.name());
-            }
-        }
-
-        if(type == null)
-        {
-            type = encrypted ? DecodeEventType.CALL_ENCRYPTED : DecodeEventType.CALL;
-        }
-
-        return type;
-    }
-
-    /**
-     * Creates a Phase 2 call event type description for the specified opcode and service options.
-     * Moved from P25TrafficChannelManager.
-     */
-    DecodeEventType getEventType(MacOpcode macOpcode, ServiceOptions serviceOptions, DecodeEventType current)
-    {
-        boolean encrypted = serviceOptions != null && serviceOptions.isEncrypted();
-
-        DecodeEventType type = null;
-
-        switch(macOpcode)
-        {
-            case PUSH_TO_TALK:
-                type = (current != null) ? current :
-                        (encrypted ? DecodeEventType.CALL_GROUP_ENCRYPTED : DecodeEventType.CALL_GROUP);
-                break;
-            case TDMA_01_GROUP_VOICE_CHANNEL_USER_ABBREVIATED:
-            case TDMA_05_GROUP_VOICE_CHANNEL_GRANT_UPDATE_MULTIPLE_IMPLICIT:
-            case TDMA_21_GROUP_VOICE_CHANNEL_USER_EXTENDED:
-            case TDMA_25_GROUP_VOICE_CHANNEL_GRANT_UPDATE_MULTIPLE_EXPLICIT:
-            case PHASE1_40_GROUP_VOICE_CHANNEL_GRANT_IMPLICIT:
-            case PHASE1_42_GROUP_VOICE_CHANNEL_GRANT_UPDATE_IMPLICIT:
-            case PHASE1_C0_GROUP_VOICE_CHANNEL_GRANT_EXPLICIT:
-            case PHASE1_C3_GROUP_VOICE_CHANNEL_GRANT_UPDATE_EXPLICIT:
-                type = encrypted ? DecodeEventType.CALL_GROUP_ENCRYPTED : DecodeEventType.CALL_GROUP;
-                break;
-            case MOTOROLA_80_GROUP_REGROUP_VOICE_CHANNEL_USER_ABBREVIATED:
-            case MOTOROLA_83_GROUP_REGROUP_VOICE_CHANNEL_UPDATE:
-            case PHASE1_90_GROUP_REGROUP_VOICE_CHANNEL_USER_ABBREVIATED:
-            case MOTOROLA_A0_GROUP_REGROUP_VOICE_CHANNEL_USER_EXTENDED:
-            case MOTOROLA_A3_GROUP_REGROUP_CHANNEL_GRANT_IMPLICIT:
-            case MOTOROLA_A4_GROUP_REGROUP_CHANNEL_GRANT_EXPLICIT:
-            case MOTOROLA_A5_GROUP_REGROUP_CHANNEL_GRANT_UPDATE:
-            case L3HARRIS_B0_GROUP_REGROUP_EXPLICIT_ENCRYPTION_COMMAND:
-                type = encrypted ? DecodeEventType.CALL_PATCH_GROUP_ENCRYPTED : DecodeEventType.CALL_PATCH_GROUP;
-                break;
-            case TDMA_02_UNIT_TO_UNIT_VOICE_CHANNEL_USER_ABBREVIATED:
-            case TDMA_22_UNIT_TO_UNIT_VOICE_CHANNEL_USER_EXTENDED:
-            case PHASE1_44_UNIT_TO_UNIT_VOICE_SERVICE_CHANNEL_GRANT_ABBREVIATED:
-            case PHASE1_46_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT_UPDATE_ABBREVIATED:
-            case PHASE1_48_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT_IMPLICIT:
-            case PHASE1_C4_UNIT_TO_UNIT_VOICE_SERVICE_CHANNEL_GRANT_EXTENDED_VCH:
-            case PHASE1_C6_UNIT_TO_UNIT_VOICE_CHANNEL_GRANT_UPDATE_EXTENDED_VCH:
-            case PHASE1_CF_UNIT_TO_UNIT_VOICE_SERVICE_CHANNEL_GRANT_EXTENDED_LCCH:
-                type = encrypted ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED : DecodeEventType.CALL_UNIT_TO_UNIT;
-                break;
-            case TDMA_03_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_USER:
-            case PHASE1_C8_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT_EXPLICIT:
-                type = encrypted ? DecodeEventType.CALL_INTERCONNECT_ENCRYPTED : DecodeEventType.CALL_INTERCONNECT;
-                break;
-            case PHASE1_54_SNDCP_DATA_CHANNEL_GRANT:
-            case L3HARRIS_A0_PRIVATE_DATA_CHANNEL_GRANT:
-            case L3HARRIS_AC_UNIT_TO_UNIT_DATA_CHANNEL_GRANT:
-                type = encrypted ? DecodeEventType.DATA_CALL_ENCRYPTED : DecodeEventType.DATA_CALL;
-                break;
-        }
-
-        if(type == null)
-        {
-            LOGGING_SUPPRESSOR.error(macOpcode.name(), 2, "Unrecognized MAC opcode for determining " +
-                    "decode event type: " + macOpcode.name());
-            type = current;
-        }
-
-        if(type == null)
-        {
-            type = DecodeEventType.CALL;
-        }
-
-        return type;
-    }
-
-    /**
      * Checks if the identifier collection represents an unmonitored call based on alias configuration.
      * Moved from P25TrafficChannelManager.
      */
@@ -1293,11 +1224,11 @@ public class P25CallSessionManager
         if(eventType != null)
         {
             boolean upgrade = false;
-            if(isPatchEventType(eventType) && !isPatchEventType(session.getEventType()))
+            if(P25DecodeEventTypeResolver.isPatchEventType(eventType) && !P25DecodeEventTypeResolver.isPatchEventType(session.getEventType()))
             {
                 upgrade = true;
             }
-            if(isEncryptedEventType(eventType) && !isEncryptedEventType(session.getEventType()))
+            if(P25DecodeEventTypeResolver.isEncryptedEventType(eventType) && !P25DecodeEventTypeResolver.isEncryptedEventType(session.getEventType()))
             {
                 upgrade = true;
             }
@@ -1415,48 +1346,6 @@ public class P25CallSessionManager
 
         Identifier id = identifiers.getIdentifier(IdentifierClass.USER, Form.ENCRYPTION_KEY, Role.ANY);
         return (id instanceof EncryptionKeyIdentifier eki) ? eki : null;
-    }
-
-    private boolean isPatchEventType(DecodeEventType eventType)
-    {
-        if(eventType == null)
-        {
-            return false;
-        }
-        return eventType.name().contains("PATCH_GROUP");
-    }
-
-    private boolean isEncryptedEventType(DecodeEventType eventType)
-    {
-        if(eventType == null)
-        {
-            return false;
-        }
-        String label = eventType.getLabel();
-        return label != null && label.contains("Encrypted");
-    }
-
-    /**
-     * Upgrades a non-encrypted DecodeEventType to its encrypted counterpart.
-     * Returns the original type if already encrypted or no mapping exists.
-     */
-    private DecodeEventType upgradeToEncrypted(DecodeEventType type)
-    {
-        if(type == null)
-        {
-            return DecodeEventType.CALL_ENCRYPTED;
-        }
-
-        return switch(type)
-        {
-            case CALL_GROUP -> DecodeEventType.CALL_GROUP_ENCRYPTED;
-            case CALL_PATCH_GROUP -> DecodeEventType.CALL_PATCH_GROUP_ENCRYPTED;
-            case CALL_UNIT_TO_UNIT -> DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED;
-            case CALL_INTERCONNECT -> DecodeEventType.CALL_INTERCONNECT_ENCRYPTED;
-            case CALL -> DecodeEventType.CALL_ENCRYPTED;
-            case DATA_CALL -> DecodeEventType.DATA_CALL_ENCRYPTED;
-            default -> type; // Already encrypted or unknown — return as-is
-        };
     }
 
     // ========================================================================
