@@ -294,6 +294,68 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     }
 
     /**
+     * Maximum time window (ms) between channel grants to consider them part of the same patch call.
+     * Motorola sends all patch grants within ~1 second of each other. If the existing tracker started
+     * more than this threshold ago, the same radio is making a new independent call, not a patch.
+     */
+    private static final long PATCH_CALL_TIME_WINDOW_MS = 3000;
+
+    /**
+     * Checks if the same FROM radio already has an active traffic channel allocated on a different frequency
+     * that started recently (within PATCH_CALL_TIME_WINDOW_MS). This detects Motorola implicit patch calls
+     * where the control channel sends separate channel grants for the same radio to multiple talk groups
+     * simultaneously.
+     *
+     * Only matches if the existing tracker's event started within the time window of the current grant,
+     * preventing false matches where the same radio makes a new independent call on a different channel
+     * after a previous call has been running for a while.
+     *
+     * Note: this method is not thread safe and the calling method must protect access using mLock.
+     *
+     * @param fromRadio the FROM identifier to check
+     * @param excludeFrequency the frequency of the current grant (exclude from comparison)
+     * @param timestamp current message timestamp for staleness check and time proximity
+     * @return the frequency where the radio already has an active traffic channel, or 0 if none found
+     */
+    private long findActiveTrafficChannelForRadio(Identifier fromRadio, long excludeFrequency, long timestamp)
+    {
+        if(fromRadio == null)
+        {
+            return 0;
+        }
+
+        for(Map.Entry<Long, P25TrafficChannelEventTracker> entry : mTS1ChannelGrantEventMap.entrySet())
+        {
+            long freq = entry.getKey();
+            P25TrafficChannelEventTracker tracker = entry.getValue();
+
+            if(freq == excludeFrequency || tracker == null || tracker.isStale(timestamp) || tracker.isComplete())
+            {
+                continue;
+            }
+
+            //Check if this tracker has the same FROM radio and has an allocated traffic channel
+            Identifier trackerFrom = tracker.getEvent().getIdentifierCollection().getFromIdentifier();
+
+            if(trackerFrom != null && trackerFrom.equals(fromRadio) && mAllocatedTrafficChannelMap.containsKey(freq))
+            {
+                //Time proximity check: only match if the existing tracker's event started recently.
+                //Patch calls arrive as near-simultaneous grants. If the existing call has been running
+                //for much longer, the same radio is just making a new independent call.
+                long trackerStart = tracker.getEvent().getTimeStart();
+                long elapsed = timestamp - trackerStart;
+
+                if(elapsed >= 0 && elapsed <= PATCH_CALL_TIME_WINDOW_MS)
+                {
+                    return freq;
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    /**
      * Stores the frequency band (aka Identifier Update) to use for preload data in starting a new traffic channel.
      * @param frequencyBand to store
      */
@@ -1604,26 +1666,39 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             //is a traffic channel allocated.  If not, allocate one and update the event description.
             if(!mAllocatedTrafficChannelMap.containsKey(frequency) && !(mIgnoreDataCalls && isDataChannelGrant))
             {
-                Channel trafficChannel = mAvailablePhase1TrafficChannelQueue.poll();
+                //Check if this is a patch call duplicate - same radio already has an active traffic channel
+                Identifier fromForPatchCheck = ic.getFromIdentifier();
+                long existingPatchFreq = findActiveTrafficChannelForRadio(fromForPatchCheck, frequency, timestamp);
 
-                if(trafficChannel != null)
+                if(existingPatchFreq > 0)
                 {
-                    if(isDataChannelGrant)
-                    {
-                        tracker.setDetails("PHASE 1 DATA CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""));
-                    }
-                    else
-                    {
-                        tracker.setDetails("PHASE 1 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""));
-                    }
-                    tracker.addChannelDescriptorIfMissing(apco25Channel);
+                    tracker.setDetails("PATCH CALL (AUDIO ON " + (existingPatchFreq / 1E6) + " MHz) " +
+                            (serviceOptions != null ? serviceOptions : ""));
                     broadcast(tracker);
-
-                    requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp);
                 }
                 else
                 {
-                    tracker.setDetails(MAX_TRAFFIC_CHANNELS_EXCEEDED);
+                    Channel trafficChannel = mAvailablePhase1TrafficChannelQueue.poll();
+
+                    if(trafficChannel != null)
+                    {
+                        if(isDataChannelGrant)
+                        {
+                            tracker.setDetails("PHASE 1 DATA CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""));
+                        }
+                        else
+                        {
+                            tracker.setDetails("PHASE 1 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""));
+                        }
+                        tracker.addChannelDescriptorIfMissing(apco25Channel);
+                        broadcast(tracker);
+
+                        requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp);
+                    }
+                    else
+                    {
+                        tracker.setDetails(MAX_TRAFFIC_CHANNELS_EXCEEDED);
+                    }
                 }
             }
 
@@ -1695,15 +1770,28 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         //Allocate a traffic channel for the downlink frequency if one isn't already allocated
         if(!mAllocatedTrafficChannelMap.containsKey(frequency))
         {
-            Channel trafficChannel = mAvailablePhase1TrafficChannelQueue.poll();
+            //Check if this is a patch call duplicate - same radio already has an active traffic channel
+            Identifier fromForPatchCheck = ic.getFromIdentifier();
+            long existingPatchFreq = findActiveTrafficChannelForRadio(fromForPatchCheck, frequency, timestamp);
 
-            if(trafficChannel == null)
+            if(existingPatchFreq > 0)
             {
-                tracker.setDetails(MAX_TRAFFIC_CHANNELS_EXCEEDED + " - " + (event.getDetails() != null ? event.getDetails() : ""));
-                return;
+                tracker.setDetails("PATCH CALL (AUDIO ON " + (existingPatchFreq / 1E6) + " MHz) " +
+                        (event.getDetails() != null ? event.getDetails() : ""));
             }
+            else
+            {
+                Channel trafficChannel = mAvailablePhase1TrafficChannelQueue.poll();
 
-            requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp);
+                if(trafficChannel == null)
+                {
+                    tracker.setDetails(MAX_TRAFFIC_CHANNELS_EXCEEDED + " - " + (event.getDetails() != null ? event.getDetails() : ""));
+                    broadcast(tracker);
+                    return;
+                }
+
+                requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp);
+            }
         }
 
         broadcast(tracker);
