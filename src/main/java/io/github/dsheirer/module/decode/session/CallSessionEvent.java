@@ -194,9 +194,14 @@ public class CallSessionEvent
         return mTimeslot;
     }
 
+    /**
+     * Returns true if this event has a valid timeslot.
+     * Uses >= 0 to match DecodeEvent convention where timeslot 0 is valid
+     * (used for Phase 1 FDMA non-timeslot signalling) and -1 means "no timeslot".
+     */
     public boolean hasTimeslot()
     {
-        return mTimeslot > 0;
+        return mTimeslot >= 0;
     }
 
     public String getRecordingPath()
