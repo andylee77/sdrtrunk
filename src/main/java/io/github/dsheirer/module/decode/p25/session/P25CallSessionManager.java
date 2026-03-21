@@ -31,6 +31,10 @@ import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
+import io.github.dsheirer.module.decode.session.CallSession;
+import io.github.dsheirer.module.decode.session.CallSessionEvent;
+import io.github.dsheirer.module.decode.session.CallSessionListener;
+import io.github.dsheirer.module.decode.session.CallState;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -47,13 +51,13 @@ import org.slf4j.LoggerFactory;
  * Central authority for P25 call session management.
  *
  * Observes DecodeEvent broadcasts from P25TrafficChannelManager and builds/manages
- * P25CallSession objects that group related events into unified call sessions.
+ * CallSession objects that group related events into unified call sessions.
  *
  * Key responsibilities:
  * - Creates and manages call session lifecycle (PENDING → ACTIVE → ENDING → COMPLETE)
  * - Matches incoming events to existing sessions (same channel, TG, or radio affinity)
  * - Detects implied patch groups when same radio transmits to different TGs
- * - Creates per-talker P25CallSessionEvent objects (one per radio ID change)
+ * - Creates per-talker CallSessionEvent objects (one per radio ID change)
  * - Notifies listeners on session creation, event addition/update, and completion
  * - Periodic cleanup of ENDING sessions past gap tolerance
  */
@@ -62,13 +66,13 @@ public class P25CallSessionManager
     private static final Logger mLog = LoggerFactory.getLogger(P25CallSessionManager.class);
 
     /** Active sessions keyed by "frequency:timeslot" */
-    private final Map<String, P25CallSession> mActiveSessions = new ConcurrentHashMap<>();
+    private final Map<String, CallSession> mActiveSessions = new ConcurrentHashMap<>();
 
     /** Sessions in ENDING state waiting for gap tolerance timeout */
-    private final Map<String, P25CallSession> mEndingSessions = new ConcurrentHashMap<>();
+    private final Map<String, CallSession> mEndingSessions = new ConcurrentHashMap<>();
 
     /** Listeners for session lifecycle events */
-    private final List<P25CallSessionListener> mListeners = new CopyOnWriteArrayList<>();
+    private final List<CallSessionListener> mListeners = new CopyOnWriteArrayList<>();
 
     /** Auto-incrementing session ID counter */
     private final AtomicLong mSessionIdCounter = new AtomicLong(1);
@@ -164,7 +168,7 @@ public class P25CallSessionManager
         String key = sessionKey(frequency, timeslot);
 
         // Try to match against active sessions
-        P25CallSession activeSession = mActiveSessions.get(key);
+        CallSession activeSession = mActiveSessions.get(key);
         if(activeSession != null && activeSession.isMatch(frequency, timeslot, toTalkgroup, fromRadio, timestamp))
         {
             // Matched active session — update it
@@ -180,7 +184,7 @@ public class P25CallSessionManager
         }
 
         // Try to match against ENDING sessions (gap tolerance resume)
-        P25CallSession endingSession = mEndingSessions.get(key);
+        CallSession endingSession = mEndingSessions.get(key);
         if(endingSession != null && endingSession.isMatch(frequency, timeslot, toTalkgroup, fromRadio, timestamp))
         {
             // Resume the ending session
@@ -197,9 +201,9 @@ public class P25CallSessionManager
         }
 
         // Also check all ending sessions for radio affinity match (cross-channel patch detection)
-        for(Map.Entry<String, P25CallSession> entry : mEndingSessions.entrySet())
+        for(Map.Entry<String, CallSession> entry : mEndingSessions.entrySet())
         {
-            P25CallSession candidate = entry.getValue();
+            CallSession candidate = entry.getValue();
             if(candidate.isMatch(frequency, timeslot, toTalkgroup, fromRadio, timestamp))
             {
                 long gap = timestamp - candidate.getLastActivityTimestamp();
@@ -223,12 +227,12 @@ public class P25CallSessionManager
         }
 
         // Create a new session
-        P25CallSession newSession = createSession(frequency, timeslot, toTalkgroup, eventType,
+        CallSession newSession = createSession(frequency, timeslot, toTalkgroup, eventType,
                 serviceOptions, channelDescriptor, encryption, timestamp);
         mActiveSessions.put(key, newSession);
 
         // Create the first per-talker event
-        P25CallSessionEvent sessionEvent = createSessionEvent(newSession, fromRadio, toTalkgroup,
+        CallSessionEvent sessionEvent = createSessionEvent(newSession, fromRadio, toTalkgroup,
                 eventType, identifiers, channelDescriptor, serviceOptions,
                 decodeEvent.getDetails(), frequency, timeslot, timestamp);
         newSession.addEvent(sessionEvent);
@@ -243,7 +247,7 @@ public class P25CallSessionManager
     /**
      * Updates an existing session with a new decode event.
      */
-    private void updateSession(P25CallSession session, DecodeEvent decodeEvent,
+    private void updateSession(CallSession session, DecodeEvent decodeEvent,
                                Identifier fromRadio, Identifier toTalkgroup,
                                DecodeEventType eventType, IdentifierCollection identifiers,
                                IChannelDescriptor channelDescriptor, ServiceOptions serviceOptions,
@@ -284,7 +288,7 @@ public class P25CallSessionManager
         if(session.isSameTalker(fromRadio))
         {
             // Same talker — update duration of current event
-            P25CallSessionEvent currentEvent = session.getCurrentEvent();
+            CallSessionEvent currentEvent = session.getCurrentEvent();
             if(currentEvent != null)
             {
                 currentEvent.updateEnd(timestamp);
@@ -300,13 +304,13 @@ public class P25CallSessionManager
         {
             // Different talker (or first talker after resuming) — create new per-talker event
             // Close out previous event
-            P25CallSessionEvent previousEvent = session.getCurrentEvent();
+            CallSessionEvent previousEvent = session.getCurrentEvent();
             if(previousEvent != null)
             {
                 previousEvent.updateEnd(timestamp);
             }
 
-            P25CallSessionEvent newEvent = createSessionEvent(session, fromRadio, toTalkgroup,
+            CallSessionEvent newEvent = createSessionEvent(session, fromRadio, toTalkgroup,
                     eventType, identifiers, channelDescriptor, serviceOptions,
                     decodeEvent.getDetails(), session.getFrequency(), session.getTimeslot(), timestamp);
             session.addEvent(newEvent);
@@ -315,15 +319,15 @@ public class P25CallSessionManager
     }
 
     /**
-     * Creates a new P25CallSession.
+     * Creates a new CallSession.
      */
-    private P25CallSession createSession(long frequency, int timeslot, Identifier talkgroup,
-                                          DecodeEventType eventType, ServiceOptions serviceOptions,
-                                          IChannelDescriptor channelDescriptor,
-                                          EncryptionKeyIdentifier encryption, long timestamp)
+    private CallSession createSession(long frequency, int timeslot, Identifier talkgroup,
+                                      DecodeEventType eventType, ServiceOptions serviceOptions,
+                                      IChannelDescriptor channelDescriptor,
+                                      EncryptionKeyIdentifier encryption, long timestamp)
     {
         long sessionId = mSessionIdCounter.getAndIncrement();
-        P25CallSession session = new P25CallSession(sessionId, frequency, timeslot, talkgroup,
+        CallSession session = new CallSession(sessionId, frequency, timeslot, talkgroup,
                 eventType, serviceOptions, channelDescriptor, timestamp);
 
         if(encryption != null)
@@ -341,16 +345,16 @@ public class P25CallSessionManager
     }
 
     /**
-     * Creates a new P25CallSessionEvent (per-talker row).
+     * Creates a new CallSessionEvent (per-talker row).
      */
-    private P25CallSessionEvent createSessionEvent(P25CallSession session, Identifier fromRadio,
-                                                    Identifier toTalkgroup, DecodeEventType eventType,
-                                                    IdentifierCollection identifiers,
-                                                    IChannelDescriptor channelDescriptor,
-                                                    ServiceOptions serviceOptions, String details,
-                                                    long frequency, int timeslot, long timestamp)
+    private CallSessionEvent createSessionEvent(CallSession session, Identifier fromRadio,
+                                                Identifier toTalkgroup, DecodeEventType eventType,
+                                                IdentifierCollection identifiers,
+                                                IChannelDescriptor channelDescriptor,
+                                                ServiceOptions serviceOptions, String details,
+                                                long frequency, int timeslot, long timestamp)
     {
-        return new P25CallSessionEvent(session.getSessionId(), timestamp, eventType,
+        return new CallSessionEvent(session.getSessionId(), timestamp, eventType,
                 fromRadio, toTalkgroup, identifiers, channelDescriptor, serviceOptions,
                 details, frequency, timeslot);
     }
@@ -398,7 +402,7 @@ public class P25CallSessionManager
     /**
      * Moves an active session to ENDING state.
      */
-    private void transitionToEnding(P25CallSession session)
+    private void transitionToEnding(CallSession session)
     {
         String key = sessionKey(session.getFrequency(), session.getTimeslot());
         mActiveSessions.remove(key);
@@ -409,7 +413,7 @@ public class P25CallSessionManager
     /**
      * Finalizes a session — moves to COMPLETE and notifies listeners.
      */
-    private void finalizeSession(P25CallSession session)
+    private void finalizeSession(CallSession session)
     {
         if(session.getState() == CallState.COMPLETE)
         {
@@ -419,7 +423,7 @@ public class P25CallSessionManager
         session.setState(CallState.COMPLETE);
 
         // Close out the last event
-        P25CallSessionEvent lastEvent = session.getCurrentEvent();
+        CallSessionEvent lastEvent = session.getCurrentEvent();
         if(lastEvent != null)
         {
             lastEvent.updateEnd(session.getCallEnd());
@@ -437,12 +441,12 @@ public class P25CallSessionManager
     private void cleanupEndingSessions()
     {
         long now = System.currentTimeMillis();
-        Iterator<Map.Entry<String, P25CallSession>> iterator = mEndingSessions.entrySet().iterator();
+        Iterator<Map.Entry<String, CallSession>> iterator = mEndingSessions.entrySet().iterator();
 
         while(iterator.hasNext())
         {
-            Map.Entry<String, P25CallSession> entry = iterator.next();
-            P25CallSession session = entry.getValue();
+            Map.Entry<String, CallSession> entry = iterator.next();
+            CallSession session = entry.getValue();
             long gap = now - session.getLastActivityTimestamp();
 
             if(gap > mGapToleranceMs)
@@ -487,7 +491,7 @@ public class P25CallSessionManager
             return;
         }
 
-        for(P25CallSession session : mActiveSessions.values())
+        for(CallSession session : mActiveSessions.values())
         {
             // Check if this session's talkgroup is related to this patch group
             if(session.hasSeenTalkgroup(patchGroup.getValue().getPatchGroup().getValue()))
@@ -496,7 +500,7 @@ public class P25CallSessionManager
             }
         }
 
-        for(P25CallSession session : mEndingSessions.values())
+        for(CallSession session : mEndingSessions.values())
         {
             if(session.hasSeenTalkgroup(patchGroup.getValue().getPatchGroup().getValue()))
             {
@@ -551,13 +555,13 @@ public class P25CallSessionManager
         }
 
         // Finalize all remaining sessions
-        for(P25CallSession session : mActiveSessions.values())
+        for(CallSession session : mActiveSessions.values())
         {
             finalizeSession(session);
         }
         mActiveSessions.clear();
 
-        for(P25CallSession session : mEndingSessions.values())
+        for(CallSession session : mEndingSessions.values())
         {
             finalizeSession(session);
         }
@@ -584,7 +588,7 @@ public class P25CallSessionManager
     // Listener management
     // ========================================================================
 
-    public void addListener(P25CallSessionListener listener)
+    public void addListener(CallSessionListener listener)
     {
         if(listener != null && !mListeners.contains(listener))
         {
@@ -592,14 +596,14 @@ public class P25CallSessionManager
         }
     }
 
-    public void removeListener(P25CallSessionListener listener)
+    public void removeListener(CallSessionListener listener)
     {
         mListeners.remove(listener);
     }
 
-    private void notifySessionCreated(P25CallSession session)
+    private void notifySessionCreated(CallSession session)
     {
-        for(P25CallSessionListener listener : mListeners)
+        for(CallSessionListener listener : mListeners)
         {
             try
             {
@@ -612,9 +616,9 @@ public class P25CallSessionManager
         }
     }
 
-    private void notifyEventAdded(P25CallSession session, P25CallSessionEvent event)
+    private void notifyEventAdded(CallSession session, CallSessionEvent event)
     {
-        for(P25CallSessionListener listener : mListeners)
+        for(CallSessionListener listener : mListeners)
         {
             try
             {
@@ -627,9 +631,9 @@ public class P25CallSessionManager
         }
     }
 
-    private void notifyEventUpdated(P25CallSession session, P25CallSessionEvent event)
+    private void notifyEventUpdated(CallSession session, CallSessionEvent event)
     {
-        for(P25CallSessionListener listener : mListeners)
+        for(CallSessionListener listener : mListeners)
         {
             try
             {
@@ -642,9 +646,9 @@ public class P25CallSessionManager
         }
     }
 
-    private void notifySessionComplete(P25CallSession session)
+    private void notifySessionComplete(CallSession session)
     {
-        for(P25CallSessionListener listener : mListeners)
+        for(CallSessionListener listener : mListeners)
         {
             try
             {

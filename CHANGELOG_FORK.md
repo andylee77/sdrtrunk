@@ -141,6 +141,55 @@ Extensive work documents accumulated in `C:\Users\Andy\Projects\SDRTrunk\work_do
 
 ---
 
+## [2026-03-20] Change 007: Audio Channel Routing Filter
+
+### New Files (3)
+- `audio/playback/AudioChannelFilterMode.java` — Enum for filter modes: OFF, ALL, SYSTEM, GROUP
+- `audio/playback/AudioChannelFilter.java` — Routing filter with per-talkgroup mute set; `accepts()` method checks system/group matching, `isTalkgroupMutedForSegment()` checks per-TG mute
+- `audio/playback/AudioChannelFilterItem.java` — Combo box model item wrapping mode + value + display label
+
+### Modified Files (8)
+- `audio/playback/AudioChannel.java` — Added `AudioChannelFilter` field, `getFilter()` accessor, per-TG mute check in both `getAudio()` mute code paths
+- `audio/playback/AudioPlaybackManager.java` — Added `AliasModel` reference, filter-aware segment routing: linked segments respect filter, empty channel assignment checks `filter.accepts()` and `filter.isOff()`
+- `audio/playback/AudioChannelPanel.java` — Added routing combo box (Off/All/Systems/Groups), per-channel mute button (replaced "M" label), right-click per-TG mute context menu, active-channel scoped alias list filtering
+- `audio/playback/AudioChannelsPanel.java` — Passes `Supplier<Set<String>>` active alias list names through to `AudioChannelPanel`
+- `audio/playback/AudioPanel.java` — Replaced global MuteButton with visible compact vertical volume slider (gain control), added `syncVolumeSlider()` on config change
+- `controller/ControllerPanel.java` — Passes active alias list names supplier from `ChannelProcessingManager` to `AudioPanel`
+- `controller/channel/ChannelProcessingManager.java` — Added `getActiveAliasListNames()` returning alias list names from actively processing channels
+- `gui/SDRTrunk.java` — Wired `aliasModel` to `AudioPlaybackManager` via `setAliasModel()`
+
+### Behavior
+- Each audio channel has a routing filter combo box: Off (no audio), All (default, all segments), System (filter by alias list), Group (filter by alias group)
+- Routing combo only shows alias lists from actively processing channels (not all configured aliases)
+- Per-channel mute button: each audio channel has its own mute/unmute icon button (independent of other channels)
+- Per-talkgroup mute via right-click context menu — outputs silence instead of discarding segments
+- Visible volume slider on the right side of the audio panel (replaces old global mute button)
+- Volume slider controls gain via FloatControl, double-click resets to 0 dB, syncs on audio device change
+- Default behavior unchanged: all channels default to ALL mode
+
+### Documentation
+- `doc/changes/007_audio_channel_routing.md` — Detailed change doc
+
+---
+
+## [2026-03-20] Change 008: Patch Call Duplicate Detection & Events Column
+
+### Modified Files (3)
+- `audio/DuplicateCallDetector.java` — Rewrote `isDuplicate(List<Identifier>, List<Identifier>)` to handle all combinations of TalkgroupIdentifier and PatchGroupIdentifier comparisons: TG↔TG (unchanged), TG↔PatchGroup (match supergroup ID or any member TG), PatchGroup↔TG (reverse), PatchGroup↔PatchGroup (supergroup match or overlapping members), Radio↔Radio (unchanged)
+- `module/decode/event/DecodeEventModel.java` — Added `COLUMN_PATCH_GROUP` (index 7) between To Alias and Channel columns, updated all subsequent column indices
+- `module/decode/event/DecodeEventPanel.java` — Added `PatchGroupCellRenderer` displaying `P:<supergroup> [<member1>, <member2>, ...]` for patch group calls; added `formatPatchGroupForSave()` for CSV export; updated CSV header and save writer
+
+### Behavior
+- When duplicate call detection by talkgroup is enabled, individual calls to member talkgroups of an active patch group are now detected as duplicates and suppressed (audio flagged as duplicate, consumer count decremented)
+- Example: Patch group P:00149[01085,01087,01089] is active → separate traffic channel grants to 01085, 01087, 01089 are flagged as duplicates of the patch call
+- New "Patch Group" column in Events table shows patch group details for patch calls, empty for regular calls
+- CSV save exports include the Patch Group column
+
+### Documentation
+- `doc/changes/008_patch_call_duplicate_detection.md` — Detailed change doc
+
+---
+
 ## Pending / Future
 
 - [ ] Finalize PlutoSDR tuner integration with Maia IQ streaming

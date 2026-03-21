@@ -16,38 +16,32 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  * ****************************************************************************
  */
-package io.github.dsheirer.module.decode.p25.session;
+
+package io.github.dsheirer.audio.playback;
 
 /**
- * Lifecycle state for a P25 call session.
+ * Audio channel routing filter modes.
  *
- * PENDING  - Channel grant received, waiting for first voice/data
- * ACTIVE   - Voice/data in progress, audio playing, recording, etc.
- * ENDING   - TLC/TDULC received or gap started; grace period before finalization.
- *            Same TG on same channel within gap threshold re-activates (back to ACTIVE).
- * COMPLETE - Call finalized, recording closed, event row settled.
+ * OFF - Channel is disabled, no audio segments are offered
+ * ALL - Accepts all audio segments (default behavior)
+ * SYSTEM - Only accepts segments from channels configured for a specific system (alias list)
+ * GROUP - Only accepts segments where the TO talkgroup has an alias in a specific group
  */
-public enum CallState
+public enum AudioChannelFilterMode
 {
-    PENDING("Pending"),
-    ACTIVE("Active"),
-    ENDING("Ending"),
-    COMPLETE("Complete");
+    OFF("Off"),
+    ALL("All"),
+    SYSTEM("System"),
+    GROUP("Group");
 
     private final String mLabel;
 
-    CallState(String label)
+    AudioChannelFilterMode(String label)
     {
         mLabel = label;
     }
 
     public String getLabel()
-    {
-        return mLabel;
-    }
-
-    @Override
-    public String toString()
     {
         return mLabel;
     }

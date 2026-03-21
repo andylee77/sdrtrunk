@@ -31,6 +31,9 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.patch.PatchGroup;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.event.filter.DecodeEventFilterSet;
 import io.github.dsheirer.preference.PreferenceType;
@@ -162,6 +165,7 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
         mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_FROM_ALIAS).setCellRenderer(new AliasedIdentifierCellRenderer(Role.FROM));
         mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_TO_ID).setCellRenderer(new IdentifierCellRenderer(Role.TO));
         mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_TO_ALIAS).setCellRenderer(new AliasedIdentifierCellRenderer(Role.TO));
+        mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_PATCH_GROUP).setCellRenderer(new PatchGroupCellRenderer());
         mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_CHANNEL).setCellRenderer(new ChannelDescriptorCellRenderer());
         mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_FREQUENCY).setCellRenderer(new FrequencyCellRenderer());
     }
@@ -267,7 +271,7 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
      */
     private static String getSaveCSVHeader()
     {
-        return "\"Time\",\"Duration\",\"Event\",\"From\",\"From Alias\",\"To\",\"To Alias\",\"Channel\",\"Frequency\",\"Details\"";
+        return "\"Time\",\"Duration\",\"Event\",\"From\",\"From Alias\",\"To\",\"To Alias\",\"Patch Group\",\"Channel\",\"Frequency\",\"Details\"";
     }
 
     /**
@@ -318,6 +322,10 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
             // To Alias
             String toAlias = formatAliases(identifierCollection, Role.TO);
             cells.add(toAlias != null ? toAlias : "");
+
+            // Patch Group
+            String patchGroup = formatPatchGroupForSave(identifierCollection);
+            cells.add(patchGroup != null ? patchGroup : "");
 
             // Channel
             IChannelDescriptor descriptor = event.getChannelDescriptor();
@@ -456,8 +464,57 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
         return sb.length() > 0 ? sb.toString() : null;
     }
 
+    /**
+     * Formats patch group information for the CSV save file.
+     * @param identifierCollection to extract patch group from
+     * @return formatted patch group string or null if not a patch call
+     */
+    private String formatPatchGroupForSave(IdentifierCollection identifierCollection)
+    {
+        if(identifierCollection == null)
+        {
+            return null;
+        }
+
+        List<Identifier> toIdentifiers = identifierCollection.getIdentifiers(Role.TO);
+        if(toIdentifiers == null || toIdentifiers.isEmpty())
+        {
+            return null;
+        }
+
+        for(Identifier identifier : toIdentifiers)
+        {
+            if(identifier instanceof PatchGroupIdentifier pgId)
+            {
+                PatchGroup patchGroup = pgId.getValue();
+                StringBuilder sb = new StringBuilder();
+                sb.append("P:");
+                sb.append(mUserPreferences.getTalkgroupFormatPreference().format(patchGroup.getPatchGroup()));
+
+                List<TalkgroupIdentifier> members = patchGroup.getPatchedTalkgroupIdentifiers();
+                if(!members.isEmpty())
+                {
+                    sb.append(" [");
+                    for(int i = 0; i < members.size(); i++)
+                    {
+                        if(i > 0)
+                        {
+                            sb.append(", ");
+                        }
+                        sb.append(mUserPreferences.getTalkgroupFormatPreference().format(members.get(i)));
+                    }
+                    sb.append("]");
+                }
+
+                return sb.toString();
+            }
+        }
+
+        return null;
+    }
+
     // ========================================================================
-    // Cell Renderers (unchanged from original)
+    // Cell Renderers
     // ========================================================================
 
     /**
@@ -711,6 +768,84 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
         public ChannelDescriptorCellRenderer()
         {
             setHorizontalAlignment(JLabel.CENTER);
+        }
+    }
+
+    /**
+     * Cell renderer for displaying patch group member talkgroups.  When the TO identifier is a
+     * PatchGroupIdentifier, this renderer extracts the member talkgroups and displays them as a
+     * comma-separated list.  For non-patch-group calls, the cell is empty.
+     */
+    public class PatchGroupCellRenderer extends DefaultTableCellRenderer
+    {
+        public PatchGroupCellRenderer()
+        {
+            setHorizontalAlignment(JLabel.CENTER);
+        }
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
+                                                       boolean hasFocus, int row, int column)
+        {
+            JLabel label = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+
+            String text = null;
+
+            if(value instanceof IdentifierCollection identifierCollection)
+            {
+                text = formatPatchGroup(identifierCollection);
+            }
+
+            label.setText(text);
+            return label;
+        }
+
+        /**
+         * Extracts patch group member information from the identifier collection.
+         * @param ic identifier collection to inspect
+         * @return formatted patch group members string, or null if not a patch call
+         */
+        private String formatPatchGroup(IdentifierCollection ic)
+        {
+            List<Identifier> toIdentifiers = ic.getIdentifiers(Role.TO);
+
+            if(toIdentifiers == null || toIdentifiers.isEmpty())
+            {
+                return null;
+            }
+
+            for(Identifier identifier : toIdentifiers)
+            {
+                if(identifier instanceof PatchGroupIdentifier pgId)
+                {
+                    PatchGroup patchGroup = pgId.getValue();
+                    StringBuilder sb = new StringBuilder();
+
+                    //Show the supergroup ID first
+                    sb.append("P:");
+                    sb.append(mUserPreferences.getTalkgroupFormatPreference().format(patchGroup.getPatchGroup()));
+
+                    //Show member talkgroups
+                    List<TalkgroupIdentifier> members = patchGroup.getPatchedTalkgroupIdentifiers();
+                    if(!members.isEmpty())
+                    {
+                        sb.append(" [");
+                        for(int i = 0; i < members.size(); i++)
+                        {
+                            if(i > 0)
+                            {
+                                sb.append(", ");
+                            }
+                            sb.append(mUserPreferences.getTalkgroupFormatPreference().format(members.get(i)));
+                        }
+                        sb.append("]");
+                    }
+
+                    return sb.toString();
+                }
+            }
+
+            return null;
         }
     }
 

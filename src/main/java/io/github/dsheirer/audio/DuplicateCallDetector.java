@@ -242,9 +242,14 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
          * Checks both lists of identifiers to determine if there are talkgroups or radio identifiers that are
          * the same in both lists.  Note: talkgroup check compares both talkgroups and patch groups.
          *
-         * @param identifiers1
-         * @param identifiers2
-         * @return
+         * Patch group member matching: when a patch group is active (e.g. P:00149[01085,01087,01089]),
+         * individual talkgroup calls to member talkgroups (01085, 01087, 01089) are detected as duplicates
+         * of the patch group call.  This is checked BEFORE the standard talkgroup/radio ID comparison so that
+         * patch call member channels are suppressed early.
+         *
+         * @param identifiers1 first list of identifiers
+         * @param identifiers2 second list of identifiers
+         * @return true if a duplicate match is found
          */
         public static boolean isDuplicate(List<Identifier> identifiers1, List<Identifier> identifiers2)
         {
@@ -260,10 +265,22 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
                         {
                             return true;
                         }
-                        else if(identifier2 instanceof PatchGroupIdentifier pgId2 &&
-                                pgId2.getValue().getPatchGroup().getValue() == tg1)
+                        else if(identifier2 instanceof PatchGroupIdentifier pgId2)
                         {
-                            return true;
+                            //Check if the talkgroup matches the supergroup ID
+                            if(pgId2.getValue().getPatchGroup().getValue() == tg1)
+                            {
+                                return true;
+                            }
+
+                            //Check if the talkgroup is a member of the patch group
+                            for(TalkgroupIdentifier patchedTg : pgId2.getValue().getPatchedTalkgroupIdentifiers())
+                            {
+                                if(patchedTg.getValue() == tg1)
+                                {
+                                    return true;
+                                }
+                            }
                         }
                     }
                 }
@@ -273,14 +290,44 @@ public class DuplicateCallDetector implements Listener<AudioSegment>
 
                     for(Identifier identifier2: identifiers2)
                     {
-                        if(identifier2 instanceof TalkgroupIdentifier tgId2 && tgId2.getValue() == talkgroup1)
+                        if(identifier2 instanceof TalkgroupIdentifier tgId2)
                         {
-                            return true;
+                            int tg2 = tgId2.getValue();
+
+                            //Check if the talkgroup matches the supergroup ID
+                            if(tg2 == talkgroup1)
+                            {
+                                return true;
+                            }
+
+                            //Check if the talkgroup is a member of the patch group
+                            for(TalkgroupIdentifier patchedTg : pgId1.getValue().getPatchedTalkgroupIdentifiers())
+                            {
+                                if(patchedTg.getValue() == tg2)
+                                {
+                                    return true;
+                                }
+                            }
                         }
-                        else if(identifier2 instanceof PatchGroupIdentifier pgId2 &&
-                                pgId2.getValue().getPatchGroup().getValue() == talkgroup1)
+                        else if(identifier2 instanceof PatchGroupIdentifier pgId2)
                         {
-                            return true;
+                            //Check if the supergroup IDs match
+                            if(pgId2.getValue().getPatchGroup().getValue() == talkgroup1)
+                            {
+                                return true;
+                            }
+
+                            //Check if any patched member talkgroups overlap between the two patch groups
+                            for(TalkgroupIdentifier patchedTg1 : pgId1.getValue().getPatchedTalkgroupIdentifiers())
+                            {
+                                for(TalkgroupIdentifier patchedTg2 : pgId2.getValue().getPatchedTalkgroupIdentifiers())
+                                {
+                                    if(patchedTg1.getValue().intValue() == patchedTg2.getValue().intValue())
+                                    {
+                                        return true;
+                                    }
+                                }
+                            }
                         }
                     }
                 }

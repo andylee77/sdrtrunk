@@ -19,6 +19,7 @@
 package io.github.dsheirer.audio.playback;
 
 import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.AudioEvent;
 import io.github.dsheirer.audio.AudioException;
 import io.github.dsheirer.audio.AudioSegment;
@@ -58,6 +59,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
     private final LinkedTransferQueue<AudioSegment> mNewAudioSegmentQueue = new LinkedTransferQueue<>();
     private final ReentrantLock mAudioChannelsLock = new ReentrantLock();
     private final UserPreferences mUserPreferences;
+    private AliasModel mAliasModel;
     private AudioPlaybackDeviceDescriptor mAudioPlaybackDevice;
     private AudioOutput mAudioOutput;
     private ScheduledFuture<?> mProcessingTask;
@@ -95,6 +97,15 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                 Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory("sdrtrunk audio manager"));
         mProcessingTask = scheduledExecutorService.scheduleAtFixedRate(new AudioSegmentProcessor(),
                 0, 100, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Sets the alias model reference used for filter-aware audio segment routing.
+     * @param aliasModel to use for system and group filter matching
+     */
+    public void setAliasModel(AliasModel aliasModel)
+    {
+        mAliasModel = aliasModel;
     }
 
     /**
@@ -195,7 +206,9 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                     {
                         for(AudioChannel audioOutput: mAudioOutput.getAudioProvider().getAudioChannels())
                         {
-                            if(audioOutput.isLinkedTo(audioSegment))
+                            //Linked segments follow to the same channel if the channel filter still accepts them
+                            if(audioOutput.isLinkedTo(audioSegment) &&
+                               (mAliasModel == null || audioOutput.getFilter().accepts(audioSegment, mAliasModel)))
                             {
                                 it.remove();
                                 audioOutput.play(audioSegment);
@@ -209,7 +222,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
                 }
             }
 
-            //Sort audio segments by playback priority and assign to empty audio outputs
+            //Sort audio segments by playback priority and assign to empty audio outputs using filter-aware routing
             if(!mAudioSegments.isEmpty())
             {
                 mAudioSegments.sort(mAudioSegmentPrioritySorter);
@@ -217,15 +230,21 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
 
                 try
                 {
-                    //Assign empty audio outputs first
-                    for(AudioChannel audioChannel: mAudioOutput.getAudioProvider().getAudioChannels())
+                    //For each segment, find an empty channel whose filter accepts it
+                    Iterator<AudioSegment> segIt = mAudioSegments.iterator();
+
+                    while(segIt.hasNext())
                     {
-                        if(audioChannel.isEmpty())
+                        AudioSegment segment = segIt.next();
+
+                        for(AudioChannel audioChannel : mAudioOutput.getAudioProvider().getAudioChannels())
                         {
-                            audioChannel.play(mAudioSegments.removeFirst());
-                            if(mAudioSegments.isEmpty())
+                            if(audioChannel.isEmpty() && !audioChannel.getFilter().isOff() &&
+                               (mAliasModel == null || audioChannel.getFilter().accepts(segment, mAliasModel)))
                             {
-                                return;
+                                segIt.remove();
+                                audioChannel.play(segment);
+                                break;
                             }
                         }
                     }

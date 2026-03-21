@@ -23,6 +23,9 @@ import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.id.AliasID;
+import io.github.dsheirer.alias.id.AliasIDType;
+import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.AudioEvent;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.icon.IconModel;
@@ -40,19 +43,39 @@ import io.github.dsheirer.settings.Setting;
 import io.github.dsheirer.settings.SettingChangeListener;
 import io.github.dsheirer.settings.SettingsManager;
 import java.awt.Color;
+import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.EventQueue;
 import java.awt.Font;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 import net.miginfocom.swing.MigLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.swing.DefaultListCellRenderer;
 import javax.swing.ImageIcon;
+import javax.swing.JButton;
+import javax.swing.JCheckBoxMenuItem;
+import javax.swing.JComboBox;
 import javax.swing.JLabel;
+import javax.swing.JList;
+import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
+import javax.swing.JSeparator;
+import javax.swing.SwingUtilities;
+import javax.swing.event.PopupMenuEvent;
+import javax.swing.event.PopupMenuListener;
 
 /**
  * UI to wrap an audio channel and provide display of metadata and playback state information.
@@ -83,10 +106,15 @@ public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, S
     private final Color mLabelColor;
     private final Color mMutedColor;
     private final Color mValueColor;
-    private final JLabel mMutedLabel = new JLabel("M");
+    private static final ImageIcon MUTED_ICON = IconModel.getScaledIcon("images/audio_muted.png", 18);
+    private static final ImageIcon UNMUTED_ICON = IconModel.getScaledIcon("images/audio_unmuted.png", 18);
+    private JButton mMuteButton;
     private JLabel mChannelName = new JLabel(" ");
     private final JLabel mIconLabel = new JLabel(" ");
     private final JLabel mIdentifierLabel = new JLabel("-----");
+    private JComboBox<AudioChannelFilterItem> mRoutingCombo;
+    private boolean mUpdatingCombo = false;
+    private final Supplier<Set<String>> mActiveAliasListNamesSupplier;
 
     /**
      * Constructs an instance
@@ -95,11 +123,14 @@ public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, S
      * @param iconModel for icon lookup
      * @param settingsManager for monitoring changes to tone insertion
      * @param userPreferences for lookup of tone and other preferences
+     * @param activeAliasListNamesSupplier supplies the set of alias list names from active channels
      */
     public AudioChannelPanel(AudioChannel audioChannel, AliasModel aliasModel, IconModel iconModel,
-                             SettingsManager settingsManager, UserPreferences userPreferences)
+                             SettingsManager settingsManager, UserPreferences userPreferences,
+                             Supplier<Set<String>> activeAliasListNamesSupplier)
     {
         mIconModel = iconModel;
+        mActiveAliasListNamesSupplier = activeAliasListNamesSupplier;
         mSettingsManager = settingsManager;
         mSettingsManager.addListener(this);
         mAliasModel = aliasModel;
@@ -152,13 +183,29 @@ public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, S
         MyEventBus.getGlobalEventBus().register(this);
 
         setLayout(new MigLayout("align center center, insets 0 0 0 0",
-            "[][][align right]0[grow,fill]", ""));
+            "[][][align right]0[grow,fill][]", ""));
         setBackground(mBackgroundColor);
 
-        mMutedLabel.setFont(mFont);
-        mMutedLabel.setForeground(mMutedColor);
-        mMutedLabel.setVisible(false);
-        add(mMutedLabel);
+        //Per-channel mute button
+        mMuteButton = new JButton(UNMUTED_ICON);
+        mMuteButton.setBorderPainted(false);
+        mMuteButton.setContentAreaFilled(false);
+        mMuteButton.setBackground(mBackgroundColor);
+        mMuteButton.setPreferredSize(new Dimension(22, 22));
+        mMuteButton.setToolTipText("Mute/Unmute this channel");
+        if(mAudioChannel != null)
+        {
+            mMuteButton.addActionListener(e -> {
+                boolean newMuted = !mAudioChannel.isMuted();
+                mAudioChannel.setMuted(newMuted);
+                mMuteButton.setIcon(newMuted ? MUTED_ICON : UNMUTED_ICON);
+            });
+        }
+        else
+        {
+            mMuteButton.setEnabled(false);
+        }
+        add(mMuteButton);
 
         mChannelName = new JLabel(mAudioChannel != null ? mAudioChannel.getChannelName() : " ");
         mChannelName.setFont(mFont);
@@ -172,7 +219,294 @@ public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, S
         mIdentifierLabel.setFont(mFont);
         mIdentifierLabel.setForeground(mValueColor);
         add(mIdentifierLabel, "wmin 10lp");
+
+        //Routing filter combo box — starts with just Off/All, refreshes from active channels on open
+        mRoutingCombo = createRoutingCombo();
+        add(mRoutingCombo, "wmin 80lp, wmax 120lp");
+
+        //Right-click context menu for per-talkgroup mute
+        addMouseListener(new MouseAdapter()
+        {
+            @Override
+            public void mousePressed(MouseEvent e)
+            {
+                if(e.isPopupTrigger())
+                {
+                    showTalkgroupMuteMenu(e);
+                }
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e)
+            {
+                if(e.isPopupTrigger())
+                {
+                    showTalkgroupMuteMenu(e);
+                }
+            }
+        });
     }
+
+    /**
+     * Creates and configures the routing filter combo box.
+     * Populates with Off, All, then system names and group names from the alias model.
+     */
+    private JComboBox<AudioChannelFilterItem> createRoutingCombo()
+    {
+        JComboBox<AudioChannelFilterItem> combo = new JComboBox<>();
+        combo.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
+        combo.setMaximumSize(new Dimension(120, 24));
+
+        //Custom renderer to handle separator items
+        combo.setRenderer(new DefaultListCellRenderer()
+        {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value, int index,
+                                                          boolean isSelected, boolean cellHasFocus)
+            {
+                if(value instanceof AudioChannelFilterItem item && item.isSeparator())
+                {
+                    return new JSeparator(JSeparator.HORIZONTAL);
+                }
+                return super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+            }
+        });
+
+        populateRoutingCombo(combo);
+
+        //Refresh the combo contents each time the dropdown is opened, so it reflects
+        //whatever channels are currently active (started via autostart, tuner tab, etc.)
+        combo.addPopupMenuListener(new PopupMenuListener()
+        {
+            @Override
+            public void popupMenuWillBecomeVisible(PopupMenuEvent e)
+            {
+                populateRoutingCombo(combo);
+            }
+            @Override
+            public void popupMenuWillBecomeInvisible(PopupMenuEvent e) {}
+            @Override
+            public void popupMenuCanceled(PopupMenuEvent e) {}
+        });
+
+        combo.addActionListener(e -> {
+            if(mUpdatingCombo || mAudioChannel == null)
+            {
+                return;
+            }
+
+            Object selected = combo.getSelectedItem();
+
+            if(selected instanceof AudioChannelFilterItem item)
+            {
+                if(item.isSeparator())
+                {
+                    //Don't allow separator selection - revert
+                    return;
+                }
+                mAudioChannel.getFilter().setFilter(item.getMode(), item.getValue());
+            }
+        });
+
+        return combo;
+    }
+
+    /**
+     * Populates the routing combo box with Off, All, then system names and group names
+     * from alias lists that belong to currently active (processing) channels.
+     * Preserves the current selection if it still exists after repopulation.
+     */
+    private void populateRoutingCombo(JComboBox<AudioChannelFilterItem> combo)
+    {
+        mUpdatingCombo = true;
+
+        try
+        {
+            //Remember the current filter state so we can restore it
+            AudioChannelFilterMode currentMode = null;
+            String currentValue = null;
+
+            if(mAudioChannel != null)
+            {
+                currentMode = mAudioChannel.getFilter().getMode();
+                currentValue = mAudioChannel.getFilter().getFilterValue();
+            }
+
+            combo.removeAllItems();
+
+            //Fixed items
+            AudioChannelFilterItem offItem = new AudioChannelFilterItem(AudioChannelFilterMode.OFF, null, "Off");
+            AudioChannelFilterItem allItem = new AudioChannelFilterItem(AudioChannelFilterMode.ALL, null, "All");
+            combo.addItem(offItem);
+            combo.addItem(allItem);
+
+            //Get the set of alias list names from active (processing) channels
+            Set<String> activeAliasListNames = mActiveAliasListNamesSupplier != null
+                ? mActiveAliasListNamesSupplier.get() : Collections.emptySet();
+
+            //Collect systems and groups from aliases belonging to active channels only
+            Set<String> systemNames = new HashSet<>();
+            Set<String> groupNames = new HashSet<>();
+
+            for(Alias alias : mAliasModel.getAliases())
+            {
+                String listName = alias.getAliasListName();
+                if(listName == null || listName.isEmpty() || !activeAliasListNames.contains(listName))
+                {
+                    continue;
+                }
+
+                systemNames.add(listName);
+
+                String group = alias.getGroup();
+                if(group != null && !group.isEmpty())
+                {
+                    groupNames.add(group);
+                }
+            }
+
+            //Add systems
+            if(!systemNames.isEmpty())
+            {
+                combo.addItem(new AudioChannelFilterItem(null, null, "--- Systems ---"));
+                List<String> sortedSystems = new ArrayList<>(systemNames);
+                Collections.sort(sortedSystems);
+                for(String system : sortedSystems)
+                {
+                    combo.addItem(new AudioChannelFilterItem(AudioChannelFilterMode.SYSTEM, system, system));
+                }
+            }
+
+            //Add groups
+            if(!groupNames.isEmpty())
+            {
+                combo.addItem(new AudioChannelFilterItem(null, null, "--- Groups ---"));
+                List<String> sortedGroups = new ArrayList<>(groupNames);
+                Collections.sort(sortedGroups);
+                for(String group : sortedGroups)
+                {
+                    combo.addItem(new AudioChannelFilterItem(AudioChannelFilterMode.GROUP, group, group));
+                }
+            }
+
+            //Restore previous selection if it still exists, otherwise default to All
+            AudioChannelFilterItem toSelect = allItem;
+
+            if(currentMode != null)
+            {
+                for(int i = 0; i < combo.getItemCount(); i++)
+                {
+                    AudioChannelFilterItem item = combo.getItemAt(i);
+                    if(item.getMode() == currentMode &&
+                       java.util.Objects.equals(item.getValue(), currentValue))
+                    {
+                        toSelect = item;
+                        break;
+                    }
+                }
+            }
+
+            combo.setSelectedItem(toSelect);
+        }
+        finally
+        {
+            mUpdatingCombo = false;
+        }
+    }
+
+    /**
+     * Shows a right-click context menu with per-talkgroup mute checkboxes.
+     * Collects talkgroup IDs from all aliases that match the current filter scope.
+     */
+    private void showTalkgroupMuteMenu(MouseEvent e)
+    {
+        if(mAudioChannel == null)
+        {
+            return;
+        }
+
+        AudioChannelFilter filter = mAudioChannel.getFilter();
+
+        if(filter.getMode() == AudioChannelFilterMode.OFF)
+        {
+            return;
+        }
+
+        //Collect talkgroup IDs in scope
+        List<TalkgroupEntry> talkgroups = new ArrayList<>();
+
+        for(Alias alias : mAliasModel.getAliases())
+        {
+            //Filter by system or group if applicable
+            if(filter.getMode() == AudioChannelFilterMode.SYSTEM)
+            {
+                if(!alias.getAliasListName().equals(filter.getFilterValue()))
+                {
+                    continue;
+                }
+            }
+            else if(filter.getMode() == AudioChannelFilterMode.GROUP)
+            {
+                if(alias.getGroup() == null || !alias.getGroup().equals(filter.getFilterValue()))
+                {
+                    continue;
+                }
+            }
+
+            for(AliasID id : alias.getAliasIdentifiers())
+            {
+                if(id.getType() == AliasIDType.TALKGROUP && id instanceof Talkgroup tg)
+                {
+                    talkgroups.add(new TalkgroupEntry(tg.getValue(), alias.getName()));
+                }
+            }
+        }
+
+        if(talkgroups.isEmpty())
+        {
+            return;
+        }
+
+        //Sort by talkgroup ID
+        talkgroups.sort(Comparator.comparingInt(TalkgroupEntry::id));
+
+        //Build popup menu
+        JPopupMenu popup = new JPopupMenu("Mute Talkgroups");
+
+        //Mute All / Unmute All
+        JMenuItem muteAll = new JMenuItem("Mute All");
+        muteAll.addActionListener(ae -> {
+            Set<Integer> allIds = new HashSet<>();
+            for(TalkgroupEntry entry : talkgroups)
+            {
+                allIds.add(entry.id());
+            }
+            filter.muteAllTalkgroups(allIds);
+        });
+        popup.add(muteAll);
+
+        JMenuItem unmuteAll = new JMenuItem("Unmute All");
+        unmuteAll.addActionListener(ae -> filter.unmuteAllTalkgroups());
+        popup.add(unmuteAll);
+
+        popup.add(new JPopupMenu.Separator());
+
+        //Per-talkgroup checkboxes
+        for(TalkgroupEntry entry : talkgroups)
+        {
+            String label = entry.id() + (entry.name() != null ? " - " + entry.name() : "");
+            JCheckBoxMenuItem item = new JCheckBoxMenuItem(label, filter.isTalkgroupMuted(entry.id()));
+            item.addActionListener(ae -> filter.setTalkgroupMuted(entry.id(), item.isSelected()));
+            popup.add(item);
+        }
+
+        popup.show(this, e.getX(), e.getY());
+    }
+
+    /**
+     * Simple record for talkgroup ID + alias name pairs used in the per-TG mute menu
+     */
+    private record TalkgroupEntry(int id, String name) {}
 
     @Override
     public void receive(final AudioEvent audioEvent)
@@ -184,7 +518,10 @@ public class AudioChannelPanel extends JPanel implements Listener<AudioEvent>, S
                 break;
             case AUDIO_MUTED:
             case AUDIO_UNMUTED:
-                EventQueue.invokeLater(() -> mMutedLabel.setVisible(mAudioChannel.isMuted()));
+                EventQueue.invokeLater(() -> {
+                    boolean muted = mAudioChannel.isMuted();
+                    mMuteButton.setIcon(muted ? MUTED_ICON : UNMUTED_ICON);
+                });
                 break;
             default:
                 break;

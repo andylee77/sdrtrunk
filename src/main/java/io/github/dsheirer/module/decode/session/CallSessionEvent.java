@@ -16,7 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  * ****************************************************************************
  */
-package io.github.dsheirer.module.decode.p25.session;
+package io.github.dsheirer.module.decode.session;
 
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
@@ -25,13 +25,15 @@ import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
 
 /**
- * Represents a single per-talker segment within a P25 call session.
+ * Represents a single per-talker segment within a call session.
  * Each radio ID change creates a new event. This is one row in the Calls tab.
+ *
+ * Protocol-agnostic — usable by P25, DMR, NXDN, or any trunked protocol.
  *
  * The event carries its own timing, identifiers, and (future) recording/transcript references.
  * It links to its parent session via sessionId.
  */
-public class P25CallSessionEvent
+public class CallSessionEvent
 {
     private final long mSessionId;
     private long mTimeStart;
@@ -60,16 +62,16 @@ public class P25CallSessionEvent
      * @param toTalkgroup TO talkgroup identifier
      * @param identifierCollection full identifier collection from the decode event
      * @param channelDescriptor channel descriptor
-     * @param serviceOptions P25 service options (may be null)
+     * @param serviceOptions service options (may be null, P25-specific but stored generically)
      * @param details event details string
      * @param frequency downlink frequency in Hz
      * @param timeslot timeslot number
      */
-    public P25CallSessionEvent(long sessionId, long timeStart, DecodeEventType eventType,
-                               Identifier fromRadio, Identifier toTalkgroup,
-                               IdentifierCollection identifierCollection,
-                               IChannelDescriptor channelDescriptor, ServiceOptions serviceOptions,
-                               String details, long frequency, int timeslot)
+    public CallSessionEvent(long sessionId, long timeStart, DecodeEventType eventType,
+                            Identifier fromRadio, Identifier toTalkgroup,
+                            IdentifierCollection identifierCollection,
+                            IChannelDescriptor channelDescriptor, ServiceOptions serviceOptions,
+                            String details, long frequency, int timeslot)
     {
         mSessionId = sessionId;
         mTimeStart = timeStart;

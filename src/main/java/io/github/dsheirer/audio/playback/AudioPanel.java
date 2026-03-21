@@ -31,14 +31,14 @@ import java.awt.Color;
 import java.awt.EventQueue;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
+import java.util.Set;
+import java.util.function.Supplier;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.swing.IconFontSwing;
 import net.miginfocom.swing.MigLayout;
 
 import javax.sound.sampled.FloatControl;
 import javax.swing.Icon;
-import javax.swing.ImageIcon;
-import javax.swing.JButton;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
@@ -50,15 +50,14 @@ import javax.swing.SwingUtilities;
  */
 public class AudioPanel extends JPanel implements Listener<AudioEvent>
 {
-    private static final ImageIcon MUTED_ICON = IconModel.getScaledIcon("images/audio_muted.png", 20);
-    private static final ImageIcon UNMUTED_ICON = IconModel.getScaledIcon("images/audio_unmuted.png", 20);
     private final AliasModel mAliasModel;
     private final AudioPlaybackManager mAudioPlaybackManager;
     private final IconModel mIconModel;
     private final SettingsManager mSettingsManager;
     private final UserPreferences mUserPreferences;
+    private final Supplier<Set<String>> mActiveAliasListNamesSupplier;
     private AudioChannelsPanel mAudioChannelsPanel;
-    private JButton mMuteButton;
+    private JSlider mVolumeSlider;
 
     /**
      * Constructs an instance
@@ -67,15 +66,18 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
      * @param settingsManager to monitor for changes
      * @param audioPlaybackManager for accessing the audio output
      * @param aliasModel for alias lookup
+     * @param activeAliasListNamesSupplier supplies the set of alias list names from active channels
      */
     public AudioPanel(IconModel iconModel, UserPreferences userPreferences, SettingsManager settingsManager,
-                      AudioPlaybackManager audioPlaybackManager, AliasModel aliasModel)
+                      AudioPlaybackManager audioPlaybackManager, AliasModel aliasModel,
+                      Supplier<Set<String>> activeAliasListNamesSupplier)
     {
         mIconModel = iconModel;
         mSettingsManager = settingsManager;
         mAudioPlaybackManager = audioPlaybackManager;
         mAliasModel = aliasModel;
         mUserPreferences = userPreferences;
+        mActiveAliasListNamesSupplier = activeAliasListNamesSupplier;
         mAudioPlaybackManager.addAudioEventListener(this);
         init();
     }
@@ -85,14 +87,116 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
      */
     private void init()
     {
-        setLayout(new MigLayout("insets 0 0 0 0", "[]0[grow,fill]", "[fill]0[]"));
+        setLayout(new MigLayout("insets 0 0 0 0", "[grow,fill]0[180lp!]", "[fill]"));
         setBackground(Color.BLACK);
-        mMuteButton = new MuteButton();
-        mMuteButton.setBackground(getBackground());
-        add(mMuteButton);
-        mAudioChannelsPanel = new AudioChannelsPanel(mIconModel, mUserPreferences, mSettingsManager, mAudioPlaybackManager, mAliasModel);
+
+        mAudioChannelsPanel = new AudioChannelsPanel(mIconModel, mUserPreferences, mSettingsManager, mAudioPlaybackManager, mAliasModel, mActiveAliasListNamesSupplier);
         add(mAudioChannelsPanel);
+
+        //Volume slider on the right side
+        mVolumeSlider = createVolumeSlider();
+        JPanel volumePanel = new JPanel(new MigLayout("insets 2 4 2 4, fill", "[fill]", "[center]"));
+        volumePanel.setBackground(Color.BLACK);
+        volumePanel.add(mVolumeSlider, "growx");
+        add(volumePanel);
+
         addMouseListener(new MouseSelectionListener());
+    }
+
+    /**
+     * Creates a horizontal volume slider that controls the audio output gain.
+     * If the audio output has no gain control, the slider is disabled.
+     */
+    private JSlider createVolumeSlider()
+    {
+        JSlider slider = new JSlider(JSlider.HORIZONTAL, 0, 100, 50);
+        slider.setBackground(Color.BLACK);
+        slider.setForeground(Color.LIGHT_GRAY);
+        slider.setToolTipText("Volume (double-click to reset)");
+        slider.setMajorTickSpacing(50);
+        slider.setMinorTickSpacing(10);
+        slider.setPaintTicks(true);
+        slider.setPaintLabels(false);
+        slider.setFocusable(false);
+
+        //Initialize from current gain control if available
+        AudioOutput output = mAudioPlaybackManager.getAudioOutput();
+        if(output != null && output.hasGainControl())
+        {
+            FloatControl gain = output.getGainControl();
+            slider.setValue(gainToSlider(gain.getValue(), gain));
+            slider.setEnabled(true);
+        }
+        else
+        {
+            slider.setEnabled(false);
+        }
+
+        slider.addChangeListener(e -> {
+            AudioOutput out = mAudioPlaybackManager.getAudioOutput();
+            if(out != null && out.hasGainControl())
+            {
+                FloatControl gain = out.getGainControl();
+                float target = sliderToGain(slider.getValue(), gain);
+                gain.setValue(target);
+            }
+        });
+
+        //Double-click to reset to center (0 dB)
+        slider.addMouseListener(new java.awt.event.MouseAdapter()
+        {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e)
+            {
+                if(e.getClickCount() == 2)
+                {
+                    slider.setValue(50);
+                }
+            }
+        });
+
+        return slider;
+    }
+
+    /**
+     * Converts a gain value (dB) to a slider position (0-100).
+     * 50 = 0 dB (no gain), 0 = minimum, 100 = maximum.
+     */
+    private static int gainToSlider(float gainDb, FloatControl control)
+    {
+        if(gainDb == 0.0f) return 50;
+        if(gainDb < 0.0f) return 50 - (int)(gainDb / control.getMinimum() * 50.0f);
+        return 50 + (int)(gainDb / control.getMaximum() * 50.0f);
+    }
+
+    /**
+     * Converts a slider position (0-100) to a gain value (dB).
+     */
+    private static float sliderToGain(int value, FloatControl control)
+    {
+        if(value == 50) return 0.0f;
+        if(value < 50) return (float)(50 - value) / 50.0f * control.getMinimum();
+        return (float)(value - 50) / 50.0f * control.getMaximum();
+    }
+
+    /**
+     * Synchronizes the volume slider with the current AudioOutput's gain control after
+     * audio device configuration changes.
+     */
+    private void syncVolumeSlider()
+    {
+        AudioOutput output = mAudioPlaybackManager.getAudioOutput();
+        if(output != null && output.hasGainControl())
+        {
+            FloatControl gain = output.getGainControl();
+            mVolumeSlider.setValue(gainToSlider(gain.getValue(), gain));
+            mVolumeSlider.setEnabled(true);
+        }
+        else
+        {
+            mVolumeSlider.setValue(50);
+            mVolumeSlider.setEnabled(false);
+        }
     }
 
     /**
@@ -109,9 +213,10 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
                 EventQueue.invokeLater(() -> {
                     remove(mAudioChannelsPanel);
                     mAudioChannelsPanel.dispose();
-                    mAudioChannelsPanel = new AudioChannelsPanel(mIconModel, mUserPreferences, mSettingsManager, mAudioPlaybackManager, mAliasModel);
+                    mAudioChannelsPanel = new AudioChannelsPanel(mIconModel, mUserPreferences, mSettingsManager, mAudioPlaybackManager, mAliasModel, mActiveAliasListNamesSupplier);
                     add(mAudioChannelsPanel);
                     mAudioChannelsPanel.repaint();
+                    syncVolumeSlider();
                     revalidate();
                     repaint();
                 });
@@ -216,9 +321,8 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
             setPaintLabels(true);
             mFloatControl = control;
             setValue(getIntegerValue(mFloatControl.getValue()));
-            addChangeListener(event -> mFloatControl.shift(mFloatControl.getValue(),
-                getFloatValue(VolumeSlider.this.getValue()),
-                1000));
+            addChangeListener(event -> mFloatControl.setValue(
+                getFloatValue(VolumeSlider.this.getValue())));
 
             addMouseListener(new MouseListener()
             {
@@ -279,27 +383,4 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
         }
     }
 
-    /**
-     * Mute button to mute all audio output channels exposed by the audio
-     * controller
-     */
-    public class MuteButton extends JButton
-    {
-        private boolean mMuted = false;
-
-        public MuteButton()
-        {
-            setIcon(UNMUTED_ICON);
-            setBorderPainted(false);
-            getAccessibleContext().setAccessibleName("Mute");
-            addActionListener(e -> {
-                mMuted = !mMuted;
-                mAudioPlaybackManager.getAudioOutput().setMuted(mMuted);
-                EventQueue.invokeLater(() -> {
-                    setIcon(mMuted ? MUTED_ICON : UNMUTED_ICON);
-                    getAccessibleContext().setAccessibleName(mMuted ? "Unmute" : "Mute");
-                });
-            });
-        }
-    }
 }

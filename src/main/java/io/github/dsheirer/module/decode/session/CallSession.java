@@ -16,7 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  * ****************************************************************************
  */
-package io.github.dsheirer.module.decode.p25.session;
+package io.github.dsheirer.module.decode.session;
 
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
@@ -36,10 +36,12 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Represents a single P25 call session — from channel grant to call termination.
+ * Represents a single call session — from channel grant to call termination.
+ *
+ * Protocol-agnostic — usable by P25, DMR, NXDN, or any trunked protocol.
  *
  * A session is the logical grouping unit that tracks all activity on a particular
- * frequency/timeslot for a single call. Within it, P25CallSessionEvent objects represent
+ * frequency/timeslot for a single call. Within it, CallSessionEvent objects represent
  * each per-talker segment. The Calls tab shows one flat row per event, with the
  * sessionId linking related events together.
  *
@@ -47,7 +49,7 @@ import java.util.Set;
  * transmitting to different talkgroups on the same channel within the gap tolerance,
  * all those TGs are considered part of the same call (implied patch group).
  */
-public class P25CallSession
+public class CallSession
 {
     private final long mSessionId;
     private long mFrequency;
@@ -56,7 +58,7 @@ public class P25CallSession
     private Identifier mTalkgroup;
     private PatchGroupIdentifier mPatchGroup;
     private final MutableIdentifierCollection mIdentifiers;
-    private final List<P25CallSessionEvent> mEvents = new ArrayList<>();
+    private final List<CallSessionEvent> mEvents = new ArrayList<>();
     private EncryptionKeyIdentifier mEncryption;
     private IChannelDescriptor mChannelDescriptor;
     private ServiceOptions mServiceOptions;
@@ -81,13 +83,13 @@ public class P25CallSession
      * @param timeslot timeslot number
      * @param talkgroup TO talkgroup identifier (may be PatchGroupIdentifier)
      * @param eventType initial decode event type
-     * @param serviceOptions P25 service options (may be null)
+     * @param serviceOptions service options (may be null)
      * @param channelDescriptor channel descriptor (may be null)
      * @param timestamp creation timestamp (epoch ms)
      */
-    public P25CallSession(long sessionId, long frequency, int timeslot, Identifier talkgroup,
-                          DecodeEventType eventType, ServiceOptions serviceOptions,
-                          IChannelDescriptor channelDescriptor, long timestamp)
+    public CallSession(long sessionId, long frequency, int timeslot, Identifier talkgroup,
+                       DecodeEventType eventType, ServiceOptions serviceOptions,
+                       IChannelDescriptor channelDescriptor, long timestamp)
     {
         mSessionId = sessionId;
         mFrequency = frequency;
@@ -277,7 +279,7 @@ public class P25CallSession
     /**
      * Returns an unmodifiable view of all per-talker events in this session.
      */
-    public List<P25CallSessionEvent> getEvents()
+    public List<CallSessionEvent> getEvents()
     {
         return Collections.unmodifiableList(mEvents);
     }
@@ -285,7 +287,7 @@ public class P25CallSession
     /**
      * Returns the most recent per-talker event, or null if none exist.
      */
-    public P25CallSessionEvent getCurrentEvent()
+    public CallSessionEvent getCurrentEvent()
     {
         if(mEvents.isEmpty())
         {
@@ -297,7 +299,7 @@ public class P25CallSession
     /**
      * Adds a per-talker event to this session.
      */
-    public void addEvent(P25CallSessionEvent event)
+    public void addEvent(CallSessionEvent event)
     {
         mEvents.add(event);
 
@@ -322,7 +324,7 @@ public class P25CallSession
     public int getTalkerCount()
     {
         Set<String> radios = new HashSet<>();
-        for(P25CallSessionEvent event : mEvents)
+        for(CallSessionEvent event : mEvents)
         {
             if(event.getFromRadio() != null)
             {
@@ -525,7 +527,7 @@ public class P25CallSession
      */
     public boolean isSameTalker(Identifier fromRadio)
     {
-        P25CallSessionEvent current = getCurrentEvent();
+        CallSessionEvent current = getCurrentEvent();
         if(current == null || current.getFromRadio() == null || fromRadio == null)
         {
             return false;

@@ -21,7 +21,10 @@ package io.github.dsheirer.module.decode.event;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
 import java.awt.EventQueue;
@@ -42,10 +45,11 @@ public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implem
     public static final int COLUMN_FROM_ALIAS = 4;
     public static final int COLUMN_TO_ID = 5;
     public static final int COLUMN_TO_ALIAS = 6;
-    public static final int COLUMN_CHANNEL = 7;
-    public static final int COLUMN_FREQUENCY = 8;
-    public static final int COLUMN_DETAILS = 9;
-    protected String[] mHeaders = new String[]{"Time", "Duration", "Event", "From", "Alias", "To", "Alias", "Channel", "Frequency", "Details"};
+    public static final int COLUMN_PATCH_GROUP = 7;
+    public static final int COLUMN_CHANNEL = 8;
+    public static final int COLUMN_FREQUENCY = 9;
+    public static final int COLUMN_DETAILS = 10;
+    protected String[] mHeaders = new String[]{"Time", "Duration", "Event", "From", "Alias", "To", "Alias", "Patch Group", "Channel", "Frequency", "Details"};
 
     public DecodeEventModel()
     {
@@ -110,6 +114,8 @@ public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implem
                     return event.getIdentifierCollection();
                 case COLUMN_TO_ALIAS:
                     return event.getIdentifierCollection();
+                case COLUMN_PATCH_GROUP:
+                    return event.getIdentifierCollection();
                 case COLUMN_CHANNEL:
                     IChannelDescriptor channelDescriptor = event.getChannelDescriptor();
 
@@ -161,6 +167,7 @@ public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implem
             case COLUMN_FROM_ID:
             case COLUMN_TO_ALIAS:
             case COLUMN_TO_ID:
+            case COLUMN_PATCH_GROUP:
                 return IdentifierCollection.class;
             case COLUMN_CHANNEL:
                 return String.class;

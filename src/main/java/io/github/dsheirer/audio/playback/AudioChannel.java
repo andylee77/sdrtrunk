@@ -52,6 +52,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
     private final LinkedTransferQueue<AudioSegment> mAudioSegmentQueue = new LinkedTransferQueue<>();
     private final UserPreferences mUserPreferences;
     private final String mChannelName;
+    private final AudioChannelFilter mFilter = new AudioChannelFilter();
 
     private AudioSegment mCurrentAudioSegment;
     private Listener<IdentifierCollection> mIdentifierCollectionListener;
@@ -127,6 +128,15 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
     }
 
     /**
+     * Audio channel routing filter for controlling which audio segments are routed to this channel
+     * and per-talkgroup mute state.
+     */
+    public AudioChannelFilter getFilter()
+    {
+        return mFilter;
+    }
+
+    /**
      * Plays the test audio sample data at higher priority that current audio queue.
      * @param samples of test audio to play.
      */
@@ -172,7 +182,7 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
         {
             float[] audio = mAudioBuffer.get();
 
-            if(isMuted())
+            if(isMuted() || mFilter.isTalkgroupMutedForSegment(mCurrentAudioSegment))
             {
                 return new float[SAMPLES_PER_INTERVAL];
             }
@@ -243,8 +253,8 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
             audio = mAudioBuffer.flush();
         }
 
-        //Finally, if we have buffer audio and we're muted, return silence
-        if(isMuted() && audio != null)
+        //Finally, if we have buffer audio and we're muted (globally or per-talkgroup), return silence
+        if(audio != null && (isMuted() || mFilter.isTalkgroupMutedForSegment(mCurrentAudioSegment)))
         {
             audio = new float[SAMPLES_PER_INTERVAL];
         }

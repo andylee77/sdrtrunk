@@ -165,13 +165,17 @@ with adequate signal strength. Investigation paused — revisit if CRC issues pe
 
 ### 3.3 Audio Playback Changes (5 files)
 
+> **📐 Design Document:** Redesigned as Audio Channel Routing & Per-Talkgroup Mute in [`doc/design/007_audio_channel_routing.md`](doc/design/007_audio_channel_routing.md)
+>
+> **Decision:** The prior implementation's talkgroup filter caused a mute bug (segments discarded in `AudioChannel.play()` before mute check). The new design moves filtering to `AudioPlaybackManager`, adds hierarchical routing (Off/All/System/Group), and per-talkgroup mute via right-click context menu. See design doc for full analysis and implementation plan.
+
 | # | File | Status |
 |---|------|--------|
-| 3.3.1 | `audio/playback/AudioChannel.java` | ☐ Deferred |
-| 3.3.2 | `audio/playback/AudioChannelPanel.java` | ☐ Deferred |
-| 3.3.3 | `audio/playback/AudioPlaybackDeviceDescriptor.java` | ☐ Deferred |
-| 3.3.4 | `audio/playback/AudioPlaybackDeviceManager.java` | ☐ Deferred |
-| 3.3.5 | `audio/playback/AudioPlaybackManager.java` | ☐ Deferred |
+| 3.3.1 | `audio/playback/AudioChannel.java` | ☐ Redesigned — see design doc 007 |
+| 3.3.2 | `audio/playback/AudioChannelPanel.java` | ☐ Redesigned — see design doc 007 |
+| 3.3.3 | `audio/playback/AudioPlaybackDeviceDescriptor.java` | ☐ Optional cleanup — see design doc 007 |
+| 3.3.4 | `audio/playback/AudioPlaybackDeviceManager.java` | ☐ Optional cleanup — see design doc 007 |
+| 3.3.5 | `audio/playback/AudioPlaybackManager.java` | ☐ Redesigned — see design doc 007 |
 
 ### 3.4 DMR Changes (3 files)
 
@@ -289,3 +293,20 @@ Items not from the migration source — new feature ideas for the fork.
 |---|---------|-------------|----------|--------|
 | F.1 | Auto-Add Detected Talkgroup Aliases | When the decoder sees a talkgroup that has no alias defined, automatically create a stub alias entry in the alias list with the talkgroup ID. This would allow the user to later fill in names, set recording/streaming, adjust priority, etc. without having to manually discover and enter every talkgroup number. Could be an option on the channel config ("Auto-populate aliases") or a button in the alias editor ("Import detected talkgroups"). Scope: collect seen talkgroups from decode events, present in UI or auto-add to alias model. | ❓ Future | ☐ Not started |
 | F.2 | Ignore Unmonitored Calls enhancement | Consider adding finer-grained control: separate checkboxes for "ignore no-alias", "ignore Do Not Monitor", "ignore no-record/stream" instead of the single combined option. | ❓ Future | ☐ Not started |
+| F.3 | Call Log Database (SQLite) | Persist completed call sessions + per-talker events to SQLite. Two-table schema (call_sessions + call_events). Write on CallSession COMPLETE — no debounce needed. Per-system DB files in `{root}/call_logs/`. | 🔴 P0 | ☐ Not started |
+| F.4 | Call Log UI, Playback & Events Cleanup | Calls tab UI (from 010) with expandable per-talker detail, inline audio player, transcript display, historical call loading from DB. Events tab simplified (remove pre-filter/save/clear/limit). | 🔴 P0 | ☐ Not started |
+| F.5 | Recording Organization | Port `organize_recordings.py` into SDRTrunk. Auto-organize on session complete, manual batch, customizable folder pattern, duplicate detection. Recording linkage is inherent — CallSession owns recording paths. | 🟢 P2 | ☐ Not started |
+| F.6 | Whisper Transcription (Native Java) | Java whisper.cpp JNI integration. Triggered by CallSession COMPLETE. Model loading popup, transcription queue with priority, per-TG/radio prompt profiles, hallucination filtering, batch processing. | 🟢 P2 | ☐ Not started |
+| F.7 | LLM Integration & Incident Management | OpenAI-compatible API integration (LMStudio/Ollama/etc). Transcript enhancement, summarization, location extraction, incident auto-detection. Incident manager with timeline view, cross-TG linking, export. | 🔵 P3 | ☐ Not started |
+| F.8 | Transcription Quality & Inline Alias Management | Manual transcript rating, re-run flagging, corrections dictionary, side-by-side comparison. Right-click alias creation from Calls tab, auto-detect TG vs radio ID, pre-fill values, batch create. | 🟡 P1 (alias), 🔵 P3 (quality) | ☐ Not started |
+| F.9 | P25 Call Session Management | Replace distributed call handling (events, audio, recording each independent) with a single `P25CallSessionManager` as the central authority. CallSession follows P25 channel grant lifecycle. Single event row per call, unified audio/recording/streaming, gap tolerance, continuous patch group enrichment. Phased: (1) event aggregation, (2) audio integration, (3) recording/streaming, (4) traffic channel consolidation. | 🔴 P0 | ☐ Design complete |
+
+> **📐 Design Documents:**
+> - F.9: [`doc/design/010_call_session_management.md`](doc/design/010_call_session_management.md) — Call Session architecture (foundation for all below)
+> - F.3: [`doc/design/006a_call_log_database.md`](doc/design/006a_call_log_database.md) — SQLite database (two-table schema)
+> - F.4: [`doc/design/006b_call_log_ui_and_playback.md`](doc/design/006b_call_log_ui_and_playback.md) — Calls tab UI, playback, Events cleanup
+> - F.5: [`doc/design/006c_recording_organization.md`](doc/design/006c_recording_organization.md) — Recording organizer
+> - F.6: [`doc/design/006d_whisper_transcription.md`](doc/design/006d_whisper_transcription.md) — Whisper transcription
+> - F.7: [`doc/design/006e_llm_and_incidents.md`](doc/design/006e_llm_and_incidents.md) — LLM integration & incident management
+> - F.8: [`doc/design/006f_quality_and_alias.md`](doc/design/006f_quality_and_alias.md) — Transcription quality & inline alias management
+> - *(Archived original: [`doc/design/006_ARCHIVED_original_plan.md`](doc/design/006_ARCHIVED_original_plan.md))*

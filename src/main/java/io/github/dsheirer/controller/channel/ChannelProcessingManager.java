@@ -54,8 +54,10 @@ import io.github.dsheirer.util.ThreadPool;
 import java.awt.GraphicsEnvironment;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledFuture;
@@ -899,6 +901,25 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      * Creates a diagnostic report.
      * @return report text.
      */
+    /**
+     * Returns the set of alias list names from channels that are currently processing (active).
+     */
+    public Set<String> getActiveAliasListNames()
+    {
+        Set<String> names = new HashSet<>();
+
+        for(Channel channel : mProcessingChainsMap.keySet())
+        {
+            String aliasListName = channel.getAliasListName();
+            if(aliasListName != null && !aliasListName.isEmpty())
+            {
+                names.add(aliasListName);
+            }
+        }
+
+        return names;
+    }
+
     public String getDiagnosticInformation()
     {
         StringBuilder sb = new StringBuilder();

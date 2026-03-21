@@ -25,6 +25,8 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.settings.SettingsManager;
 import java.awt.Color;
 import java.awt.Component;
+import java.util.Set;
+import java.util.function.Supplier;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.JPanel;
@@ -44,7 +46,8 @@ public class AudioChannelsPanel extends JPanel
      * @param aliasModel for accessing aliases
      */
     public AudioChannelsPanel(IconModel iconModel, UserPreferences userPreferences, SettingsManager settingsManager,
-                              IAudioController controller, AliasModel aliasModel)
+                              IAudioController controller, AliasModel aliasModel,
+                              Supplier<Set<String>> activeAliasListNamesSupplier)
     {
         setLayout(new MigLayout("insets 0 0 0 0",
             "[][sizegroup abc,grow,fill][][sizegroup abc,grow,fill]", "[grow,fill]"));
@@ -55,7 +58,7 @@ public class AudioChannelsPanel extends JPanel
 
         for(int x = 0; x < controller.getAudioChannels().size(); x++)
         {
-            add(new AudioChannelPanel(controller.getAudioChannels().get(x), aliasModel, iconModel, settingsManager, userPreferences));
+            add(new AudioChannelPanel(controller.getAudioChannels().get(x), aliasModel, iconModel, settingsManager, userPreferences, activeAliasListNamesSupplier));
 
             if(x < controller.getAudioChannels().size() - 1)
             {
@@ -68,7 +71,7 @@ public class AudioChannelsPanel extends JPanel
         if(controller.getAudioChannels().size() == 1)
         {
             addSeparator();
-            add(new AudioChannelPanel(null, aliasModel, iconModel, settingsManager, userPreferences), "growx");
+            add(new AudioChannelPanel(null, aliasModel, iconModel, settingsManager, userPreferences, activeAliasListNamesSupplier), "growx");
         }
     }
 

@@ -16,15 +16,17 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  * ****************************************************************************
  */
-package io.github.dsheirer.module.decode.p25.session;
+package io.github.dsheirer.module.decode.session;
 
 /**
- * Listener interface for P25 call session lifecycle events.
+ * Listener interface for call session lifecycle events.
  *
- * Implementations can subscribe to a P25CallSessionManager to receive notifications
+ * Protocol-agnostic — usable by P25, DMR, NXDN, or any trunked protocol.
+ *
+ * Implementations can subscribe to a call session manager to receive notifications
  * about session creation, per-talker events, and session completion.
  */
-public interface P25CallSessionListener
+public interface CallSessionListener
 {
     /**
      * Called when a new call session is created (channel grant received).
@@ -32,7 +34,7 @@ public interface P25CallSessionListener
      *
      * @param session the newly created session
      */
-    void onSessionCreated(P25CallSession session);
+    void onSessionCreated(CallSession session);
 
     /**
      * Called when a new per-talker event is added to an existing session.
@@ -42,7 +44,7 @@ public interface P25CallSessionListener
      * @param session the parent session
      * @param event the newly added per-talker event
      */
-    void onSessionEventAdded(P25CallSession session, P25CallSessionEvent event);
+    void onSessionEventAdded(CallSession session, CallSessionEvent event);
 
     /**
      * Called when an existing per-talker event is updated (duration extended, identifiers added).
@@ -50,7 +52,7 @@ public interface P25CallSessionListener
      * @param session the parent session
      * @param event the updated per-talker event
      */
-    void onSessionEventUpdated(P25CallSession session, P25CallSessionEvent event);
+    void onSessionEventUpdated(CallSession session, CallSessionEvent event);
 
     /**
      * Called when a session reaches COMPLETE state (gap threshold exceeded after ENDING).
@@ -58,5 +60,5 @@ public interface P25CallSessionListener
      *
      * @param session the completed session
      */
-    void onSessionComplete(P25CallSession session);
+    void onSessionComplete(CallSession session);
 }

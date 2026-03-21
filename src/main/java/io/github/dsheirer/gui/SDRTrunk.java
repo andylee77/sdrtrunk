@@ -216,6 +216,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         new ChannelSelectionManager(mPlaylistManager.getChannelModel());
 
         AudioPlaybackManager audioPlaybackManager = new AudioPlaybackManager(mUserPreferences);
+        audioPlaybackManager.setAliasModel(aliasModel);
 
         mAudioRecordingManager = new AudioRecordingManager(mUserPreferences);
         mAudioRecordingManager.start();

@@ -62,7 +62,8 @@ public class ControllerPanel extends JPanel
                            TunerManager tunerManager, UserPreferences userPreferences, boolean detailTabsVisible)
     {
         mAudioPanel = new AudioPanel(iconModel, userPreferences, settingsManager, audioPlaybackManager,
-            playlistManager.getAliasModel());
+            playlistManager.getAliasModel(),
+            () -> playlistManager.getChannelProcessingManager().getActiveAliasListNames());
         mNowPlayingPanel = new NowPlayingPanel(playlistManager, iconModel, userPreferences, settingsManager, detailTabsVisible);
         mMapPanel = new MapPanel(mapService, playlistManager.getAliasModel(), iconModel, settingsManager);
         mTunerManagerPanel = new TunerViewPanel(tunerManager, userPreferences, playlistManager);
