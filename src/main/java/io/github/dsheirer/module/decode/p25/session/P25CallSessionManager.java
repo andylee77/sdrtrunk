@@ -534,9 +534,10 @@ public class P25CallSessionManager
         }
 
         // Different call or no existing session — end existing if different
+        // Clear cached event so the new call creates a fresh Events tab row
         if(existing != null)
         {
-            transitionToEnding(existing);
+            transitionToEnding(existing, true);
         }
 
         // Determine ignored reason (if any) — but ALWAYS create a session so Calls tab
@@ -741,9 +742,10 @@ public class P25CallSessionManager
         }
 
         // Different call or no existing session
+        // Clear cached event so the new call creates a fresh Events tab row
         if(existing != null)
         {
-            transitionToEnding(existing);
+            transitionToEnding(existing, true);
         }
 
         // Determine ignored reason — but ALWAYS create a session so Calls tab gets entries
@@ -977,7 +979,9 @@ public class P25CallSessionManager
             if(session != null)
             {
                 session.updateActivity(timestamp);
-                transitionToEnding(session);
+                // TDU within the same call — keep cached Events tab event so the row
+                // survives reactivation with correct duration
+                transitionToEnding(session, false);
             }
         }
         catch(Exception e)
@@ -1457,19 +1461,30 @@ public class P25CallSessionManager
     // Session lifecycle transitions
     // ========================================================================
 
-    private void transitionToEnding(CallSession session)
+    /**
+     * Transitions a session to ENDING state, moving it from active to ending map.
+     *
+     * @param session the session to transition
+     * @param clearCachedEvent true to remove the cached Events tab event (used when a DIFFERENT
+     *        call starts on the same frequency); false to keep it (used for TDU within the same
+     *        call, so the Events tab row survives reactivation with correct duration)
+     */
+    private void transitionToEnding(CallSession session, boolean clearCachedEvent)
     {
         String key = sessionKey(session.getFrequency(), session.getTimeslot());
         mActiveSessions.remove(key);
         session.setState(CallState.ENDING);
         mEndingSessions.put(key + ":" + session.getSessionId(), session);
 
-        // Remove the cached Events tab event so a new call on this frequency creates a fresh row.
-        // Phase 1 control events are cached with timeslot 0, so try both keys.
-        mActiveControlEvents.remove(key);
-        if(session.getTimeslot() != 0)
+        if(clearCachedEvent)
         {
-            mActiveControlEvents.remove(session.getFrequency() + ":0");
+            // Remove the cached Events tab event so a new call on this frequency creates a fresh row.
+            // Phase 1 control events are cached with timeslot 0, so try both keys.
+            mActiveControlEvents.remove(key);
+            if(session.getTimeslot() != 0)
+            {
+                mActiveControlEvents.remove(session.getFrequency() + ":0");
+            }
         }
     }
 
@@ -1521,6 +1536,16 @@ public class P25CallSessionManager
         if(lastEvent != null)
         {
             lastEvent.updateEnd(session.getCallEnd());
+        }
+
+        // Clean up the cached Events tab event now that the session is truly complete.
+        // This handles the case where transitionToEnding kept the cached event (clearCachedEvent=false)
+        // for potential reactivation, but the session expired without being reactivated.
+        String key = sessionKey(session.getFrequency(), session.getTimeslot());
+        mActiveControlEvents.remove(key);
+        if(session.getTimeslot() != 0)
+        {
+            mActiveControlEvents.remove(session.getFrequency() + ":0");
         }
 
         mLog.trace("Session complete: {} (events={}, duration={}ms)",
