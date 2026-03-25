@@ -1,5 +1,123 @@
 # SDRTrunk — Changelog (andylee77 fork)
 
+## [2026-03-25] Change 023: DATCH Motorola Protocol Deep Analysis
+
+- Built `tools/datch_motorola_protocol.py` — comprehensive 9-analysis protocol tool
+- **Confirmed byte[0] header structure**: bits[7:6]=frame counter (cycles 0->2->3), bits[5:0]=opcode
+- **Identified 15+ distinct opcodes** mapping to system beacons, data channels, encrypted data
+- **Discovered three idle families**: EC (primary), B6 (channel-specific), 20 (tertiary)
+- **Mapped "xx05/xx35" family group** — shared opcode 0x17, structured data records
+- **EC-variant XOR extraction** reveals user data encoded as bit diffs from idle canonical
+- **Cross-family relationships found** — families sharing payload body with different headers
+- **Identified encrypted/OTAR families** — opcodes 0x25-0x34 with high-entropy payloads
+- **Single-byte protocol signature matches are false positives** — +36 offset spacing confirms
+  per-slot byte values, not reassembled PDU content
+- Detailed findings: `doc/design/023_datch_motorola_protocol_analysis.md`
+
+## [2026-03-25] Change 023: DATCH Corpus Deep Analysis
+
+**First DATCH corpus successfully captured and analyzed — 2,329 timeslots, 93 KB, 100-second session (Clay County 857.2125 MHz)**
+
+Key findings from deep bit-level analysis:
+- **Two dominant idle/keepalive families** account for 94.2% of traffic (EC family: 57.7%, B6 family: 36.5%)
+- **NOT encrypted** at transport layer (53.7% 1-bit ratio, massive payload duplication)
+- **Frame structure decoded:** byte 0 bits[7:6] = frame counter, byte 0 bits[5:0] = family ID, byte 9 = slot counter (4-value cycle), byte 30 = sub-counter, byte 39 = CRC/checksum
+- **7-slot superframe** repeating cycle identified, alternating TS1/TS2 in fixed pattern
+- **112 data burst timeslots (4.8%)** found in 4 distinct burst events:
+  - Burst 1: Single control/setup frame
+  - Burst 2: 28-timeslot structured data burst (1.4s) with EC-variant and new control families
+  - Burst 3: 7-timeslot data burst (250ms) with structured low-entropy content
+  - Burst 4: 4-timeslot HIGH ENTROPY burst — possible encrypted application data (OTAR/APX-NEXT MDT)
+  - Plus 48 recurring status/beacon frames scattered throughout session
+- **XOR analysis** confirms only 4 byte positions vary within idle families (bytes 0, 9, 30, 39)
+
+New tools and docs:
+- `tools/datch_deep_analysis.py` — Bit-level DATCH analysis (families, XOR diffs, superframe detection, data transition mapping)
+- `doc/design/023_datch_corpus_analysis_findings.md` — Full analysis findings with protocol architecture
+
+## [2026-03-25] Change 023: Phase 2 TDMA Data Channel (DATCH) Raw Capture
+
+**Phase 2 TDMA data sessions now captured to JSONL corpus and Data tab**
+- Previously, DATCH timeslots (Motorola TDMA data channel) were detected and allocated but their 320-bit payloads were discarded — zero data captured from 14-15 second data sessions
+- Added `getDescrambledPayload()` and `getDescrambledPayloadHex()` to `DatchTimeslot.java`
+- Added `DATCH_RAW` payload type to `CapturedPayload.PayloadType` enum
+- Added `processDatchTimeslot()` handler in `P25DataCaptureModule.java` — captures every DATCH timeslot's raw 40-byte descrambled payload with timestamp, timeslot number, channel, and frequency metadata
+- Each 15-second data session now produces ~400 timeslots × 40 bytes = ~16,000 bytes of raw data for analysis
+
+**Offline Analysis Tool**
+- New `tools/datch_analysis.py` for corpus analysis: session grouping, header pattern analysis, FEC detection (entropy, IPv4 signature scanning, duplicate detection), raw hex dump
+- Usage: `python tools/datch_analysis.py logs/p25_data_system_20260325.jsonl --all`
+
+**Zero risk to existing functionality** — no changes to P25P2DecoderState, voice processing, or any other decoder path. DatchTimeslot messages already flowed through the message listener chain; we just added a handler to capture their payloads.
+
+Files: DatchTimeslot.java, P25DataCaptureModule.java, CapturedPayload.java, tools/datch_analysis.py
+Doc: `doc/changes/023_phase2_tdma_data_channel_raw_capture.md`, `doc/design/023_phase2_tdma_data_channel_decoding.md`
+
+## [2026-03-25] Change 022: Extended PDU Block Assembly & Data Channel Timeout
+
+**Extended PDU Block Assembly (was limited to 5 blocks, now supports up to 32)**
+- P25 protocol allows up to 127 data blocks per PDU header, but framer was hardcoded to BLOCK_1..BLOCK_5
+- Previous max payload: 60-80 bytes — insufficient for larger IP packets, LRRP responses, etc.
+- Added `PACKET_DATA_UNIT_BLOCK_EXTENDED` DUID and dynamic assembly loop in `P25P1MessageFramer`
+- New capacity: up to 384 bytes (unconfirmed) / 512 bytes (confirmed) per PDU sequence — 6.4× improvement
+- Blocks 1-5 handling completely unchanged (zero regression risk); extension only activates when blocksToFollow > 5
+- Safety cap at 32 blocks prevents runaway assembly from corrupted headers
+
+**Data Channel Timeout Extension**
+- Traffic channel fade timeout increased from 1 second to 3 seconds
+- Prevents premature teardown of data channels during multi-burst PDU sessions
+- Still well below upstream's 45-second default; good balance of capture vs resource usage
+
+**Diagnostic Logging**
+- Logs when PDU header announces > 5 blocks (format, confirmed flag, LLID)
+- Logs extended sequence completion with block count and payload bytes
+- Warns when header requests > 32 blocks (safety cap)
+
+Files: P25P1DataUnitID.java, P25P1MessageAssembler.java, P25P1MessageFramer.java, P25P1DecoderState.java
+
+## [2026-03-25] Change 021: Zero-Payload Filter & Deep IP Analysis
+
+**Zero-Payload Filter**
+- Added filter in `P25DataCaptureModule.emit()` to suppress records with `payloadLength == 0`
+- Added safety filter in `DataCaptureModel.receive()` at the UI level
+- Eliminates 76.7% of corpus noise (PDU ResponseMessage ACKs with no data content)
+- JSONL logs and Data tab now show only records with actual payload data
+
+**Deep IP Analysis (12.8-hour corpus: 260K records, Jacksonville + Clay County)**
+- New `tools/ip_reconstruct.py`: 10-section comprehensive IP layer analysis
+- SNDCP session lifecycle reconstruction: 2,318 unique IPs assigned to 2,097 radios
+- Network topology mapped: 10.51.1.116 (LRRP/ARS server), 192.168.23.240 (fleet mgmt), 10.71.0.0/16 (radio space)
+- 579 LRRP events (all outbound location requests), 2,988 XCMP fleet mgmt, 1,313 ARS registrations
+- Longest SNDCP session: 8.1 hours; 117 radios with multiple IP assignments
+- IP flow reconstruction limited: hex captures contain wrapper bytes, not IP packet bytes
+- Recommendations: extract IP payload from PacketMessage hierarchy, capture data channel traffic
+
+Files: P25DataCaptureModule.java, DataCaptureModel.java, tools/ip_reconstruct.py, tools/quick_stats.py
+Doc: `doc/changes/021_zero_payload_filter_and_deep_analysis.md`, `doc/design/021_deep_ip_analysis_findings.md`
+
+---
+
+## [2026-03-25] Change 018: LRRP GPS Coordinate Extraction & XCMP/XNL Detection
+
+**Priority 4: LRRP GPS Extraction**
+- Walks parsed packet hierarchy (IPV4→UDP→LRRPPacket) to extract GPS coordinates
+- Extracts lat/lon from Point2d/Point3d tokens, heading from Heading, speed from Speed
+- New GPS column in Data tab (green text, between Protocol and Hex)
+- GPS coordinates included in JSON corpus log (`lat`, `lon`, `heading`, `speed` fields)
+- "Copy GPS" right-click context menu for LRRP rows; "LRRP" filter option in type dropdown
+
+**Priority 5: XCMP/XNL Port 64414 Identification**
+- Added port 64414 routing to XCMP parser in PacketMessageFactory
+- P25DataCaptureModule detects XCMP packets and extracts message type
+- Port 64414 traffic labeled as "XCMP" protocol with purple color
+- Added ARS (teal), SNDCP (dark cyan) protocol colors
+
+Files: CapturedPayload.java, P25DataCaptureModule.java, DataCaptureModel.java,
+DataCapturePanel.java, PacketMessageFactory.java
+Doc: `doc/changes/018_lrrp_gps_and_xcmp_detection.md`
+
+---
+
 Tracking log for the `plutosdr` branch of the SDRTrunk fork.
 Upstream: [DSheirer/sdrtrunk](https://github.com/DSheirer/sdrtrunk)
 
@@ -302,6 +420,24 @@ Extensive work documents accumulated in `C:\Users\Andy\Projects\SDRTrunk\work_do
 ### Documentation
 - `doc/changes/013_call_session_and_event_fixes.md` — Detailed change doc
 - `doc/design/013_call_session_and_event_fixes.md` — Design analysis (3 issues)
+
+---
+
+## [2026-03-25] Change 017: Data Capture Improvements
+
+### Modified Files (3)
+- `module/decode/p25/data/P25DataCaptureModule.java` — Added SACCH idle noise filters (MotorolaUnknownOpcode135 suppressed entirely, MotorolaTDMADataChannel deduplicated per timeslot); added `mChannelFrequency` and `mChannelDescriptor` fields with setters; all CapturedPayload builders now include `.frequency()` and `.channel()`; enhanced protocol detection via details-string fallback on packet/SNDCP/PDU methods
+- `module/decode/p25/data/PayloadStringScanner.java` — Added `detectProtocolFromDetails(String)` method recognizing Motorola UDP ports (4001→LRRP, 4005→ARS, 64414→XCMP) and keywords (LRRP, ARS+REGISTRATION, SNDCP+ACTIVATE/DEACTIVATE)
+- `module/decode/DecoderFactory.java` — Wired `channelDescriptor.getDownlinkFrequency()` and `channelDescriptor.toString()` to P25DataCaptureModule for traffic channels (both P25 Phase 1 and Phase 2)
+
+### Behavior
+- **Priority 1 — SACCH idle noise filter:** MotorolaUnknownOpcode135 messages (opcode 0x87, SACCH idle fill repeating ~350ms) are completely suppressed; MotorolaTDMADataChannel (opcode 0x8B) IDLE messages are deduplicated per timeslot — only emitted when details change. Reduces ~85% of MAC noise on Phase 2 systems.
+- **Priority 2 — Frequency/channel metadata:** Traffic channel payloads now include the source frequency (Hz) and channel descriptor string, enabling correlation of captured data with specific traffic channels and call events.
+- **Priority 3 — Enhanced protocol detection:** Packets previously showing "UNKNOWN" or generic "IPv4" are now identified as LRRP, ARS, XCMP, or SNDCP based on well-known port numbers and keywords in the decoded message details string.
+
+### Documentation
+- `doc/changes/017_data_capture_improvements.md` — Detailed change doc
+- `doc/design/017_data_capture_improvements.md` — Design document
 
 ---
 
