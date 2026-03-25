@@ -45,6 +45,7 @@ public class NowPlayingPanel extends JPanel
     private final DecodeEventPanel mDecodeEventPanel;
     private final MessageActivityPanel mMessageActivityPanel;
     private final ChannelSpectrumPanel mChannelSpectrumSquelchPanel;
+    private final io.github.dsheirer.module.decode.p25.data.ui.DataCapturePanel mDataCapturePanel;
     private JideTabbedPane mTabbedPane;
     private JideSplitPane mSplitPane;
     private boolean mDetailTabsVisible;
@@ -62,6 +63,7 @@ public class NowPlayingPanel extends JPanel
         mMessageActivityPanel = new MessageActivityPanel(userPreferences);
         mChannelMetadataPanel = new ChannelMetadataPanel(playlistManager, iconModel, userPreferences);
         mChannelSpectrumSquelchPanel = new ChannelSpectrumPanel(playlistManager, settingsManager);
+        mDataCapturePanel = new io.github.dsheirer.module.decode.p25.data.ui.DataCapturePanel(userPreferences);
         mDetailTabsVisible = detailTabsVisible;
 
         init();
@@ -100,6 +102,7 @@ public class NowPlayingPanel extends JPanel
             mTabbedPane.addTab("Calls", mCallSessionPanel);
             mTabbedPane.addTab("Events", mDecodeEventPanel);
             mTabbedPane.addTab("Messages", mMessageActivityPanel);
+            mTabbedPane.addTab("Data", mDataCapturePanel);
             mTabbedPane.addTab("Channel", mChannelSpectrumSquelchPanel);
             mTabbedPane.setFont(this.getFont());
             mTabbedPane.setForeground(Color.BLACK);
@@ -141,5 +144,6 @@ public class NowPlayingPanel extends JPanel
         mChannelMetadataPanel.addProcessingChainSelectionListener(mDecodeEventPanel);
         mChannelMetadataPanel.addProcessingChainSelectionListener(mMessageActivityPanel);
         mChannelMetadataPanel.addProcessingChainSelectionListener(mChannelSpectrumSquelchPanel);
+        mChannelMetadataPanel.addProcessingChainSelectionListener(mDataCapturePanel);
     }
 }

@@ -45,6 +45,7 @@ import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventDuplicateDetector;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.event.EventStatus;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.IDecodeEventProvider;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
@@ -131,6 +132,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private boolean mIgnoreEncryptedCalls;
     private boolean mIgnoreUnmonitoredCalls;
     private AliasList mAliasList;
+    private io.github.dsheirer.module.decode.p25.data.P25DataCaptureModule mDataCaptureModule;
     //Used only for data calls
     private DecodeEventDuplicateDetector mDuplicateDetector = new DecodeEventDuplicateDetector();
     private TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
@@ -187,19 +189,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     }
 
     /**
-     * Releases a traffic channel allocated for the given frequency.
-     * Stub for future patch-call consolidation — CSM calls this when it detects
-     * duplicate sessions for patched talk groups on different frequencies so it can
-     * drop the extra channel and keep only one for audio.
-     * @param frequency of the traffic channel to release
-     */
-    public void releaseTrafficChannel(long frequency)
-    {
-        //TODO: implement actual channel deallocation for patch-call consolidation
-        mLog.info("releaseTrafficChannel stub called for frequency: " + frequency);
-    }
-
-    /**
      * Returns the call log writer for database read access (history loading).
      * @return call log writer or null
      */
@@ -238,6 +227,26 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             mCallSessionManager.setAliasList(aliasList);
         }
+    }
+
+    /**
+     * Sets the control channel's P25DataCaptureModule reference.
+     * Traffic channel modules use this to forward their captured payloads to the control
+     * channel for aggregated display in the Data tab.
+     *
+     * @param dataCaptureModule the control channel's data capture module
+     */
+    public void setDataCaptureModule(io.github.dsheirer.module.decode.p25.data.P25DataCaptureModule dataCaptureModule)
+    {
+        mDataCaptureModule = dataCaptureModule;
+    }
+
+    /**
+     * Returns the control channel's P25DataCaptureModule, or null if not set.
+     */
+    public io.github.dsheirer.module.decode.p25.data.P25DataCaptureModule getDataCaptureModule()
+    {
+        return mDataCaptureModule;
     }
 
     /**
@@ -473,9 +482,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
     /**
      * Broadcasts an initial or update decode event to any registered listener.
-     * Note: Phase 3 removed the passive observer call to mCallSessionManager.onDecodeEvent().
-     * The call session manager now receives events directly via processChannelGrant/Update
-     * and onTrafficChannelUpdate/End.
+     * Note: the call session manager receives events via explicit forwarding calls
+     * (processChannelGrant/Update, onTrafficChannelUpdate/End) rather than passively
+     * observing broadcast events.
      */
     public void broadcast(DecodeEvent decodeEvent)
     {
@@ -485,6 +494,16 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     mDuplicateDetector.isDuplicate(decodeEvent, System.currentTimeMillis()))
             {
                 return;
+            }
+
+            //Auto-detect IGNORED status for builder-created events with IGNORED details
+            if(decodeEvent instanceof P25ChannelGrantEvent cge &&
+                    cge.getEventStatus() == EventStatus.ACTIVE_CONTROL &&
+                    cge.getDetails() != null &&
+                    (cge.getDetails().contains("IGNORED") || cge.getDetails().contains("MAX TRAFFIC") ||
+                     cge.getDetails().contains("REJECTED")))
+            {
+                cge.setEventStatus(EventStatus.IGNORED);
             }
 
             mDecodeEventListener.receive(decodeEvent);
@@ -526,6 +545,35 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         if(tracker != null && tracker.isStale(timestamp))
         {
+            //Once the traffic channel has started updating the event, the control channel should not
+            //consider it stale. The traffic channel owns the lifecycle at that point — only
+            //completeTraffic() (TDU) or the teardown monitor should end the event. The stale check
+            //uses control channel timestamps which are in a different clock domain than the traffic
+            //channel timestamps, causing false stale detection on active calls.
+            if(tracker.isStarted() && !tracker.isComplete())
+            {
+                mLog.debug("Stale check skipped for active tracker: freq={} ts={} TO={}",
+                        frequency, timeslot, tracker.getEvent().getIdentifierCollection().getToIdentifier());
+                return tracker;
+            }
+
+            //Mark the stale event as ENDED before removing
+            if(tracker.getEvent() instanceof P25ChannelGrantEvent cge &&
+                    cge.getEventStatus() != EventStatus.IGNORED &&
+                    cge.getEventStatus() != EventStatus.ENDED)
+            {
+                if(tracker.getEvent().getEventType() != DecodeEventType.DATA_CALL &&
+                   tracker.getEvent().getEventType() != DecodeEventType.DATA_CALL_ENCRYPTED)
+                {
+                    mLog.info("TCM STALE: freq={} event@{} TO={} FROM={} — timed out, marking ENDED",
+                            frequency, Integer.toHexString(System.identityHashCode(tracker.getEvent())),
+                            tracker.getEvent().getIdentifierCollection().getToIdentifier(),
+                            tracker.getEvent().getIdentifierCollection().getFromIdentifier());
+                }
+                cge.setEventStatus(EventStatus.ENDED);
+                broadcast(tracker);
+            }
+
             removeTracker(frequency, timeslot);
             tracker = null;
         }
@@ -558,6 +606,17 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     private void addTracker(P25TrafficChannelEventTracker tracker, long frequency, int timeslot)
     {
+        //Only log voice call trackers — data call churn drowns out useful diagnostics
+        if(tracker.getEvent().getEventType() != DecodeEventType.DATA_CALL &&
+           tracker.getEvent().getEventType() != DecodeEventType.DATA_CALL_ENCRYPTED)
+        {
+            mLog.info("TCM ADD: freq={} event@{} TO={} FROM={} status={}",
+                    frequency, Integer.toHexString(System.identityHashCode(tracker.getEvent())),
+                    tracker.getEvent().getIdentifierCollection().getToIdentifier(),
+                    tracker.getEvent().getIdentifierCollection().getFromIdentifier(),
+                    tracker.getEvent().getEventStatus());
+        }
+
         if(timeslot == P25P1Message.TIMESLOT_2)
         {
             mTS2ChannelGrantEventMap.put(frequency, tracker);
@@ -575,13 +634,25 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     private void removeTracker(long frequency, int timeslot)
     {
+        P25TrafficChannelEventTracker existing;
         if(timeslot == P25P1Message.TIMESLOT_2)
         {
-            mTS2ChannelGrantEventMap.remove(frequency);
+            existing = mTS2ChannelGrantEventMap.remove(frequency);
         }
         else
         {
-            mTS1ChannelGrantEventMap.remove(frequency);
+            existing = mTS1ChannelGrantEventMap.remove(frequency);
+        }
+
+        if(existing != null &&
+           existing.getEvent().getEventType() != DecodeEventType.DATA_CALL &&
+           existing.getEvent().getEventType() != DecodeEventType.DATA_CALL_ENCRYPTED)
+        {
+            mLog.info("TCM REMOVE: freq={} event@{} TO={} FROM={} status={}",
+                    frequency, Integer.toHexString(System.identityHashCode(existing.getEvent())),
+                    existing.getEvent().getIdentifierCollection().getToIdentifier(),
+                    existing.getEvent().getIdentifierCollection().getFromIdentifier(),
+                    existing.getEvent().getEventStatus());
         }
     }
 
@@ -639,6 +710,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             P25TrafficChannelEventTracker tracker = getTracker(frequency, timeslot);
 
             //If we have a tracker that we can mark complete, broadcast the updated tracker/event.
+            //Do NOT disable the traffic channel here — let the control channel stale timeout handle
+            //cleanup, same as Phase 1. See processP1TrafficCallEnd javadoc for rationale.
             if(tracker != null && tracker.completeTraffic(timestamp))
             {
                 completed = true;
@@ -1056,19 +1129,70 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             P25TrafficChannelEventTracker tracker = getTracker(frequency, P25P1Message.TIMESLOT_1);
 
-            //If the tracker is already started, it was for another call.  Close it and recreate the event.
+            //If the tracker is already started, check if it's the same call (same talkgroup).
+            //If same call, just enrich with identifiers from the HDU — don't replace the tracker,
+            //because that would lose the FROM radio that the control channel grant provided.
+            //Only replace if it's truly a different call (different talkgroup).
             if(tracker != null && tracker.isStarted())
             {
+                Identifier existingTo = tracker.getEvent().getIdentifierCollection().getToIdentifier();
+                boolean sameCall = existingTo != null && talkgroup != null && existingTo.equals(talkgroup);
+
+                if(sameCall)
+                {
+                    mLog.info("TCM HDU: freq={} TO={} FROM={} — SAME CALL, enriching (tracker FROM={})",
+                            frequency, talkgroup, radio,
+                            tracker.getEvent().getIdentifierCollection().getFromIdentifier());
+                    //Same call — enrich with any new identifiers from HDU
+                    tracker.addIdentifierIfMissing(talkgroup);
+                    if(radio != null)
+                    {
+                        tracker.addIdentifierIfMissing(radio);
+                    }
+                    if(eki != null)
+                    {
+                        tracker.addIdentifierIfMissing(eki);
+                    }
+                    tracker.updateDurationTraffic(timestamp);
+                    broadcast(tracker);
+
+                    // Forward to call session manager
+                    if(mCallSessionManager != null)
+                    {
+                        mCallSessionManager.onTrafficChannelUpdate(frequency, P25P1Message.TIMESLOT_1,
+                                tracker.getEvent().getIdentifierCollection(), timestamp);
+                    }
+                    return;
+                }
+
+                mLog.info("TCM HDU: freq={} TO={} FROM={} — DIFFERENT CALL, replacing tracker (old TO={})",
+                        frequency, talkgroup, radio, existingTo);
+                //Different call — remove old tracker
                 removeTracker(frequency, P25P1Message.TIMESLOT_1);
                 tracker = null;
             }
 
             if(tracker != null)
             {
-            tracker.addIdentifierIfMissing(talkgroup);
+                Identifier existingTo = tracker.getEvent().getIdentifierCollection().getToIdentifier();
+                boolean talkgroupAlreadySet = existingTo != null && talkgroup != null && existingTo.equals(talkgroup);
+
+                if(talkgroupAlreadySet)
+                {
+                    mLog.info("TCM HDU: freq={} — tracker found, talkgroup={} matches, no update needed",
+                            frequency, talkgroup);
+                }
+                else
+                {
+                    mLog.info("TCM HDU: freq={} — tracker found, enriching talkgroup={} (was {})",
+                            frequency, talkgroup, existingTo);
+                }
+                tracker.addIdentifierIfMissing(talkgroup);
             }
             else
             {
+                mLog.info("TCM HDU: freq={} TO={} FROM={} — NO tracker, creating new event",
+                        frequency, talkgroup, radio);
                 DecodeEventType decodeEventType = getDecodeEventType(talkgroup, eki);
                 MutableIdentifierCollection mic = new MutableIdentifierCollection();
                 mic.update(talkgroup);
@@ -1231,35 +1355,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                             tracker.getEvent().getIdentifierCollection(), timestamp);
                 }
             }
-            else
-            {
-                MutableIdentifierCollection mic = new MutableIdentifierCollection(identifiers);
-                Identifier talkgroup = mic.getToIdentifier();
-                Identifier encryption = mic.getEncryptionIdentifier();
-
-                if(talkgroup != null && encryption instanceof EncryptionKeyIdentifier eki)
-                {
-                    DecodeEventType decodeEventType = getDecodeEventType(talkgroup, eki);
-                    //Create a new event for the current call.
-                    ServiceOptions serviceOptions = (eki.isEncrypted() ? VoiceServiceOptions.createEncrypted() :
-                            VoiceServiceOptions.createUnencrypted());
-                    P25ChannelGrantEvent callEvent = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
-                            .channelDescriptor(channelDescriptor)
-                            .details("PHASE 1 CALL " + (eki.isEncrypted() ? eki.toString() : ""))
-                            .identifiers(mic)
-                            .build();
-
-                    tracker = new P25TrafficChannelEventTracker(callEvent);
-                    addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
-                    broadcast(tracker);
-
-                    // Forward to call session manager
-                    if(mCallSessionManager != null)
-                    {
-                        mCallSessionManager.onTrafficChannelUpdate(frequency, P25P1Message.TIMESLOT_1, mic, timestamp);
-                    }
-                }
-            }
+            //else: no tracker exists (control channel grant was missed or race condition).
+            //Don't create a new event here — the control channel is the authority for event creation.
+            //This prevents duplicate events when both control and traffic create separate objects.
         }
         finally
         {
@@ -1313,7 +1411,30 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 return;
             }
 
-            //Create a new event for the current call.
+            // If tracker exists but is a different call (different FROM), update the existing
+            // tracker's identifiers rather than creating a duplicate event. The control channel
+            // handles new event creation via isDifferentTalker.
+            if(tracker != null)
+            {
+                for(Identifier identifier: ic.getIdentifiers())
+                {
+                    tracker.addIdentifierIfMissing(identifier);
+                }
+
+                tracker.updateDurationTraffic(timestamp);
+                tracker.addDetailsIfMissing(additionalDetails);
+                broadcast(tracker);
+
+                if(mCallSessionManager != null)
+                {
+                    mCallSessionManager.onTrafficChannelUpdate(frequency, P25P1Message.TIMESLOT_1,
+                            tracker.getEvent().getIdentifierCollection(), timestamp);
+                }
+                return;
+            }
+
+            // No tracker exists — the control channel grant was missed. Create a new event
+            // only in this case as a fallback.
             P25ChannelGrantEvent callEvent = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
                     .channelDescriptor(channelDescriptor)
                     .details(additionalDetails != null ? additionalDetails : "PHASE 1 CALL " +
@@ -1354,6 +1475,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     public void processP1ControlAnnouncedTrafficUpdate(APCO25Channel channel, ServiceOptions serviceOptions,
                                                        IdentifierCollection ic, Opcode opcode, long timestamp, String context)
     {
+        boolean sameCall = false;
+
         mLock.lock();
 
         try
@@ -1363,6 +1486,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             //If we have a tracked event, update it.  Otherwise, make sure we have the traffic channel allocated
             if(tracker != null && tracker.isSameCallCheckingToOnly(ic, timestamp))
             {
+                sameCall = true;
                 //Only rebroadcast the tracked event if the timestamp was updated from this control channel timestamp
                 //Once the traffic channel takes over updating the tracked event time/duration, further control channel
                 // updates are ignored.
@@ -1375,6 +1499,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 //Remove the existing call tracker because it's a different call now
                 removeTracker(channel.getDownlinkFrequency(), channel.getTimeslot());
+                // processP1ControlDirectedChannelGrant already calls CSM.processChannelGrant internally,
+                // so we do NOT also call CSM.processChannelUpdate after this (would be a double call).
                 processP1ControlDirectedChannelGrant(channel, serviceOptions, ic, opcode, timestamp, context);
             }
         }
@@ -1383,8 +1509,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             mLock.unlock();
         }
 
-        // Forward to CSM for session tracking (outside lock)
-        if(mCallSessionManager != null)
+        // Forward to CSM for session tracking (outside lock) — only for same-call updates.
+        // When a different call is detected, processP1ControlDirectedChannelGrant already forwarded
+        // to CSM.processChannelGrant, so we don't double-call CSM here.
+        if(sameCall && mCallSessionManager != null)
         {
             mCallSessionManager.processChannelUpdate(channel, serviceOptions, ic, opcode, timestamp, context);
         }
@@ -1393,6 +1521,15 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     /**
      * Marks the tracked traffic channel event as complete but does not remove the event from the tracker map so
      * that we can continue to track the event for the traffic channel.
+     *
+     * Important: We do NOT disable the traffic channel here. The traffic channel stays allocated and running
+     * so it can decode the next transmission on the same frequency (e.g., if the same or different radio
+     * keys up again immediately). The control channel's stale timeout (STALE_EVENT_THRESHOLD_MS = 2s) will
+     * handle cleanup when no more grants arrive for this frequency. Immediately disabling the channel on
+     * TDU causes a cascade of problems: the teardown monitor removes the tracker, the next control channel
+     * GRANT_UPDATE (which only carries TO, no FROM) creates a new FROM=null tracker, allocates a new traffic
+     * channel from the pool, which may not start in time — creating orphan events with missing FROM.
+     *
      * @param frequency for the channel
      * @return true if the tracked call event was marked as complete.
      */
@@ -1409,6 +1546,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             //If we have a tracker that we can mark complete, broadcast the updated tracker/event.
             if(tracker != null && tracker.isStarted() && tracker.completeTraffic(timestamp))
             {
+                mLog.info("TCM TDU: freq={} TO={} FROM={} - call ended (channel stays open for reuse)",
+                        frequency,
+                        tracker.getEvent().getIdentifierCollection().getToIdentifier(),
+                        tracker.getEvent().getIdentifierCollection().getFromIdentifier());
                 completed = true;
                 broadcast(tracker);
             }
@@ -1425,121 +1566,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
 
         return completed;
-    }
-
-    // ========================================================================
-    // Pool API — used by P25CallSessionManager (Phase 3)
-    // ========================================================================
-
-    /**
-     * Allocates a Phase 1 traffic channel from the pool for the given frequency.
-     * Sets up the channel and requests start via event bus.
-     *
-     * Thread-safe: acquires mLock internally.
-     *
-     * @param apco25Channel that describes the traffic channel downlink frequency
-     * @param ic identifier collection for the call
-     * @param timestamp of the request event
-     * @return the allocated Channel, or null if pool is exhausted or already allocated
-     */
-    public Channel allocatePhase1TrafficChannel(APCO25Channel apco25Channel, IdentifierCollection ic, long timestamp)
-    {
-        long frequency = apco25Channel.getDownlinkFrequency();
-
-        mLock.lock();
-
-        try
-        {
-            if(mAllocatedTrafficChannelMap.containsKey(frequency))
-            {
-                return mAllocatedTrafficChannelMap.get(frequency);
-            }
-
-            Channel trafficChannel = mAvailablePhase1TrafficChannelQueue.poll();
-
-            if(trafficChannel != null)
-            {
-                requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp);
-                return trafficChannel;
-            }
-
-            return null;
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-    }
-
-    /**
-     * Allocates a Phase 2 traffic channel from the pool for the given frequency.
-     * Sets up the channel and requests start via event bus.
-     *
-     * Thread-safe: acquires mLock internally.
-     *
-     * @param apco25Channel that describes the traffic channel downlink frequency
-     * @param ic identifier collection for the call
-     * @param timestamp of the request event
-     * @return the allocated Channel, or null if pool is exhausted or already allocated
-     */
-    public Channel allocatePhase2TrafficChannel(APCO25Channel apco25Channel, IdentifierCollection ic, long timestamp)
-    {
-        long frequency = apco25Channel.getDownlinkFrequency();
-
-        mLock.lock();
-
-        try
-        {
-            if(mAllocatedTrafficChannelMap.containsKey(frequency) || frequency == getCurrentControlFrequency())
-            {
-                return mAllocatedTrafficChannelMap.get(frequency);
-            }
-
-            Channel trafficChannel = mAvailablePhase2TrafficChannelQueue.poll();
-
-            if(trafficChannel != null)
-            {
-                requestTrafficChannelStart(trafficChannel, apco25Channel, ic, timestamp);
-                return trafficChannel;
-            }
-
-            return null;
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-    }
-
-    /**
-     * Checks if a traffic channel is already allocated for the given frequency.
-     *
-     * Thread-safe: acquires mLock internally.
-     *
-     * @param frequency to check
-     * @return true if a traffic channel is allocated for the frequency
-     */
-    public boolean isTrafficChannelAllocated(long frequency)
-    {
-        mLock.lock();
-
-        try
-        {
-            return mAllocatedTrafficChannelMap.containsKey(frequency);
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-    }
-
-    /**
-     * Converts a phase 2 channel to a phase 1 channel.
-     * Public so the call session manager (in a different package) can use it.
-     */
-    public static APCO25Channel convertPhase2ToPhase1Channel(APCO25Channel channel)
-    {
-        return convertPhase2ToPhase1(channel);
     }
 
     /**
@@ -1624,6 +1650,12 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         if(tracker != null && tracker.isSameCallCheckingToOnly(ic, timestamp))
         {
+            mLog.debug("TCM CTRL GRANT SAME_CALL: freq={} event@{} TO={} FROM={} started={} complete={} incoming FROM={}",
+                    frequency, Integer.toHexString(System.identityHashCode(tracker.getEvent())),
+                    tracker.getEvent().getIdentifierCollection().getToIdentifier(),
+                    tracker.getEvent().getIdentifierCollection().getFromIdentifier(),
+                    tracker.isStarted(), tracker.isComplete(), ic.getFromIdentifier());
+
             //If we're ignoring encrypted calls, just update duration and don't allocate a traffic channel
             if(mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted())
             {
@@ -1644,14 +1676,31 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             if(from != null && tracker.isDifferentTalker(from))
             {
-                P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
-                    .channelDescriptor(apco25Channel)
-                    .details("CONTINUE - PHASE 1 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""))
-                    .identifiers(ic)
-                    .build();
+                //Once the traffic channel has started, it owns the event lifecycle. Don't create a new
+                //tracker/event for each talker change — that would orphan the active traffic event and
+                //create short-duration split events. The traffic channel handles talker changes via
+                //its own HDU/LDU messages. Just log the change for diagnostics.
+                if(tracker.isStarted())
+                {
+                    mLog.info("TCM CTRL GRANT: freq={} TO={} FROM={} — DIFFERENT TALKER but traffic active, skipping new event (tracker FROM={})",
+                            frequency, ic.getToIdentifier(), from,
+                            tracker.getEvent().getIdentifierCollection().getFromIdentifier());
+                }
+                else
+                {
+                    mLog.info("TCM CTRL GRANT: freq={} TO={} FROM={} — DIFFERENT TALKER, new event (old FROM={})",
+                            frequency, ic.getToIdentifier(), from,
+                            tracker.getEvent().getIdentifierCollection().getFromIdentifier());
 
-                tracker = new P25TrafficChannelEventTracker(event);
-                addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
+                    P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
+                        .channelDescriptor(apco25Channel)
+                        .details("CONTINUE - PHASE 1 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""))
+                        .identifiers(ic)
+                        .build();
+
+                    tracker = new P25TrafficChannelEventTracker(event);
+                    addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
+                }
             }
 
             //The tracked event can have an empty FROM identifier at start of call ... update here
@@ -1707,57 +1756,50 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         if(mIgnoreDataCalls && isDataChannelGrant)
         {
-            if(tracker == null)
-            {
-                P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
-                        .channelDescriptor(apco25Channel)
-                        .details("IGNORED: PHASE 1 DATA CALL " + (serviceOptions != null ? serviceOptions : ""))
-                        .identifiers(ic)
-                        .build();
-                tracker = new P25TrafficChannelEventTracker(event);
-                addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
-                broadcast(tracker);
-            }
-
+            //Create or replace the tracked event for this ignored call. The previous tracker (if any)
+            //is for a different call since isSameCallCheckingToOnly returned false above.
+            P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
+                    .channelDescriptor(apco25Channel)
+                    .details("IGNORED: PHASE 1 DATA CALL " + (serviceOptions != null ? serviceOptions : ""))
+                    .identifiers(ic)
+                    .build();
+            tracker = new P25TrafficChannelEventTracker(event);
+            addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
+            broadcast(tracker);
             return;
         }
 
         if(mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted())
         {
-            if(tracker == null)
-            {
-                P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
-                        .channelDescriptor(apco25Channel)
-                        .details("IGNORED: ENCRYPTED CALL " + (serviceOptions != null ? serviceOptions : ""))
-                        .identifiers(ic)
-                        .build();
-                tracker = new P25TrafficChannelEventTracker(event);
-                addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
-                broadcast(tracker);
-            }
-
+            P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
+                    .channelDescriptor(apco25Channel)
+                    .details("IGNORED: ENCRYPTED CALL " + (serviceOptions != null ? serviceOptions : ""))
+                    .identifiers(ic)
+                    .build();
+            tracker = new P25TrafficChannelEventTracker(event);
+            addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
+            broadcast(tracker);
             return;
         }
 
         if(mIgnoreUnmonitoredCalls && isUnmonitored(ic))
         {
-            if(tracker == null)
-            {
-                P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
-                        .channelDescriptor(apco25Channel)
-                        .details("IGNORED: UNMONITORED CALL " + (serviceOptions != null ? serviceOptions : ""))
-                        .identifiers(ic)
-                        .build();
-                tracker = new P25TrafficChannelEventTracker(event);
-                addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
-                broadcast(tracker);
-            }
-
+            P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
+                    .channelDescriptor(apco25Channel)
+                    .details("IGNORED: UNMONITORED CALL " + (serviceOptions != null ? serviceOptions : ""))
+                    .identifiers(ic)
+                    .build();
+            tracker = new P25TrafficChannelEventTracker(event);
+            addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
+            broadcast(tracker);
             return;
         }
 
         String details = isDataChannelGrant ? "PHASE 1 DATA CHANNEL GRANT " : "PHASE 1 CHANNEL GRANT " +
                 (serviceOptions != null ? serviceOptions : "");
+
+        mLog.info("TCM CTRL GRANT: freq={} TO={} FROM={} — NEW tracker created",
+                frequency, ic.getToIdentifier(), ic.getFromIdentifier());
 
         P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
             .channelDescriptor(apco25Channel)

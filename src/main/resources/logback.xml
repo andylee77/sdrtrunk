@@ -37,4 +37,26 @@
   <!-- SQLite JDBC driver - suppress verbose SQL statement logging -->
   <logger name="org.sqlite" level="WARN" />
 
+  <!-- Suppress noisy per-session call log/CSM completion messages -->
+  <logger name="io.github.dsheirer.calllog.CallLogWriter" level="WARN" />
+  <logger name="io.github.dsheirer.module.decode.p25.session.P25CallSessionManager" level="WARN" />
+
+  <!-- P25 Deep Data Capture — JSON-lines corpus log -->
+  <appender name="P25_DATA_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>logs/p25_data_capture.jsonl</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>logs/p25_data_capture.%d{yyyy-MM-dd}.%i.jsonl</fileNamePattern>
+      <maxFileSize>50MB</maxFileSize>
+      <maxHistory>30</maxHistory>
+      <totalSizeCap>500MB</totalSizeCap>
+    </rollingPolicy>
+    <encoder>
+      <pattern>%msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <logger name="P25_DATA_CAPTURE" level="INFO" additivity="false">
+    <appender-ref ref="P25_DATA_FILE" />
+  </logger>
+
 </configuration>

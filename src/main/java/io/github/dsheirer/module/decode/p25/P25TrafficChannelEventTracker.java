@@ -24,6 +24,7 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.module.decode.event.EventStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -242,7 +243,17 @@ public class P25TrafficChannelEventTracker
     {
         if(!isComplete())
         {
+            if(!mStarted)
+            {
+                LOGGER.info("Tracker STARTED (traffic): event@{} TO={} FROM={} freq={} status={}",
+                        Integer.toHexString(System.identityHashCode(getEvent())),
+                        getEvent().getIdentifierCollection().getToIdentifier(),
+                        getEvent().getIdentifierCollection().getFromIdentifier(),
+                        getEvent().getChannelDescriptor(),
+                        getEvent().getEventStatus());
+            }
             mStarted = true;
+            getEvent().setEventStatus(EventStatus.ACTIVE_TRAFFIC);
             getEvent().update(timestamp);
         }
         else
@@ -263,6 +274,7 @@ public class P25TrafficChannelEventTracker
         if(!isComplete())
         {
             mComplete = true;
+            getEvent().setEventStatus(EventStatus.ENDED);
             getEvent().end(timestamp);
             return true;
         }
@@ -271,12 +283,19 @@ public class P25TrafficChannelEventTracker
     }
 
     /**
-     * Updates the details for the tracked event.
+     * Updates the details for the tracked event.  If the details indicate the event was ignored
+     * (e.g. max traffic channels exceeded), the event status is set to IGNORED.
      * @param details to update
      */
     public void setDetails(String details)
     {
         getEvent().setDetails(details);
+
+        if(details != null && (details.contains("IGNORED") || details.contains("MAX TRAFFIC") ||
+                details.contains("REJECTED")))
+        {
+            getEvent().setEventStatus(EventStatus.IGNORED);
+        }
     }
 
     /**

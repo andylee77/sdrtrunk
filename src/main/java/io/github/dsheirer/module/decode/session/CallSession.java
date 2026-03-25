@@ -69,6 +69,9 @@ public class CallSession
     private long mLastActivityTimestamp;
     private boolean mDuplicate;
 
+    // Current FROM radio identity — used for splitting sessions when the talker changes
+    private Identifier mCurrentFromRadio;
+
     // Patch group detection: all TG IDs seen during this session
     private final Set<Integer> mSeenTalkgroups = new HashSet<>();
 
@@ -253,6 +256,24 @@ public class CallSession
     public void setDuplicate(boolean duplicate)
     {
         mDuplicate = duplicate;
+    }
+
+    /**
+     * Returns the current FROM radio identifier for this session — the radio that is
+     * currently transmitting (or was last transmitting). Used for session splitting:
+     * when a new grant arrives with a different FROM radio, a new session is created.
+     */
+    public Identifier getCurrentFromRadio()
+    {
+        return mCurrentFromRadio;
+    }
+
+    /**
+     * Sets the current FROM radio identifier for this session.
+     */
+    public void setCurrentFromRadio(Identifier fromRadio)
+    {
+        mCurrentFromRadio = fromRadio;
     }
 
     /**
@@ -450,6 +471,16 @@ public class CallSession
 
         // Must not be complete
         if(mState == CallState.COMPLETE)
+        {
+            return false;
+        }
+
+        // FROM radio veto: if this session has an identified FROM radio and the incoming
+        // grant has a DIFFERENT FROM radio, this is a different talker's transmission.
+        // Each PTT by a different radio is a separate call session, even on the same talkgroup.
+        // This is the key fix for call duration accuracy — without this, a response from a
+        // different radio on the same TG would extend the original session's duration.
+        if(mCurrentFromRadio != null && fromRadio != null && !mCurrentFromRadio.equals(fromRadio))
         {
             return false;
         }

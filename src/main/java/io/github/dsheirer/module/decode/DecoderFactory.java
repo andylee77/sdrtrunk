@@ -84,6 +84,7 @@ import io.github.dsheirer.module.decode.nbfm.NBFMDecoderState;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.audio.P25P1AudioModule;
 import io.github.dsheirer.module.decode.p25.audio.P25P2AudioModule;
+import io.github.dsheirer.module.decode.p25.data.P25DataCaptureModule;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderC4FM;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderLSM;
@@ -259,6 +260,25 @@ public class DecoderFactory
         modules.add(new P25P2AudioModule(userPreferences, P25P2Message.TIMESLOT_1, aliasList));
         modules.add(new P25P2AudioModule(userPreferences, P25P2Message.TIMESLOT_2, aliasList));
 
+        // P25 Deep Data Capture — intercepts all messages to extract raw payloads (Phase 2)
+        P25DataCaptureModule dataCaptureP2 = new P25DataCaptureModule();
+        dataCaptureP2.setSystemName(channel.hasSystem() ? channel.getSystem() : channel.getName());
+        if(channel.getChannelType() == ChannelType.STANDARD && p25TrafficChannelManager != null)
+        {
+            // Control channel — store reference on TCM for traffic channels to find
+            p25TrafficChannelManager.setDataCaptureModule(dataCaptureP2);
+        }
+        else if(trafficChannelManager instanceof P25TrafficChannelManager parentTCM2)
+        {
+            // Traffic channel — forward captures to control channel's module
+            P25DataCaptureModule parentDataCapture = parentTCM2.getDataCaptureModule();
+            if(parentDataCapture != null)
+            {
+                dataCaptureP2.setParentModule(parentDataCapture);
+            }
+        }
+        modules.add(dataCaptureP2);
+
         //Add a channel rotation monitor when we have multiple control channel frequencies specified
         if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sctmf &&
                 sctmf.hasMultipleFrequencies())
@@ -295,15 +315,18 @@ public class DecoderFactory
             }
         }
 
+        P25TrafficChannelManager p1TrafficChannelManager = null;
+
         if(channel.getChannelType() == ChannelType.STANDARD)
         {
-            P25TrafficChannelManager primaryTCM = new P25TrafficChannelManager(channel);
-            primaryTCM.setAliasList(aliasList);
-            modules.add(primaryTCM);
-            modules.add(new P25P1DecoderState(channel, primaryTCM));
+            p1TrafficChannelManager = new P25TrafficChannelManager(channel);
+            p1TrafficChannelManager.setAliasList(aliasList);
+            modules.add(p1TrafficChannelManager);
+            modules.add(new P25P1DecoderState(channel, p1TrafficChannelManager));
         }
         else if(trafficChannelManager instanceof P25TrafficChannelManager parentTCM)
         {
+            p1TrafficChannelManager = parentTCM;
             P25P1DecoderState decoderState = new P25P1DecoderState(channel, parentTCM);
             decoderState.setCurrentChannel(channelDescriptor);
             modules.add(decoderState);
@@ -314,6 +337,25 @@ public class DecoderFactory
         }
 
         modules.add(new P25P1AudioModule(userPreferences, aliasList));
+
+        // P25 Deep Data Capture — intercepts all messages to extract raw payloads
+        P25DataCaptureModule dataCaptureP1 = new P25DataCaptureModule();
+        dataCaptureP1.setSystemName(channel.hasSystem() ? channel.getSystem() : channel.getName());
+        if(channel.getChannelType() == ChannelType.STANDARD && p1TrafficChannelManager != null)
+        {
+            // Control channel — store reference on TCM for traffic channels to find
+            p1TrafficChannelManager.setDataCaptureModule(dataCaptureP1);
+        }
+        else if(p1TrafficChannelManager != null)
+        {
+            // Traffic channel — forward captures to control channel's module
+            P25DataCaptureModule parentDataCapture = p1TrafficChannelManager.getDataCaptureModule();
+            if(parentDataCapture != null)
+            {
+                dataCaptureP1.setParentModule(parentDataCapture);
+            }
+        }
+        modules.add(dataCaptureP1);
 
         //Add a channel rotation monitor when we have multiple control channel frequencies specified
         if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sctmf &&

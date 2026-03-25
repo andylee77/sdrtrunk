@@ -159,6 +159,10 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
 
     private void updateCellRenderers()
     {
+        mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_STATUS).setCellRenderer(new StatusCellRenderer());
+        mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_STATUS).setMaxWidth(90);
+        mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_STATUS).setMinWidth(70);
+        mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_STATUS).setPreferredWidth(80);
         mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_TIME).setCellRenderer(mTimestampCellRenderer);
         mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_DURATION).setCellRenderer(new DurationCellRenderer());
         mTable.getColumnModel().getColumn(DecodeEventModel.COLUMN_FROM_ID).setCellRenderer(new IdentifierCellRenderer(Role.FROM));
@@ -846,6 +850,79 @@ public class DecodeEventPanel extends JPanel implements Listener<ProcessingChain
             }
 
             return null;
+        }
+    }
+
+    /**
+     * Cell renderer for the status column — shows a colored dot and text label indicating
+     * the event's current status (active/traffic, active/control, ended, ignored).
+     */
+    public class StatusCellRenderer extends DefaultTableCellRenderer
+    {
+        private static final int DOT_SIZE = 10;
+
+        public StatusCellRenderer()
+        {
+            setHorizontalAlignment(JLabel.LEFT);
+        }
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
+                                                       boolean hasFocus, int row, int column)
+        {
+            JLabel label = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+
+            if(value instanceof EventStatus status && status.getColor() != null)
+            {
+                label.setIcon(new DotIcon(status.getColor(), DOT_SIZE));
+                label.setText(status.getLabel());
+                label.setToolTipText(null);
+            }
+            else
+            {
+                label.setIcon(null);
+                label.setText(null);
+                label.setToolTipText(null);
+            }
+
+            return label;
+        }
+    }
+
+    /**
+     * Simple icon that paints a filled colored circle (dot) for the status column.
+     */
+    private static class DotIcon implements javax.swing.Icon
+    {
+        private final Color mColor;
+        private final int mSize;
+
+        public DotIcon(Color color, int size)
+        {
+            mColor = color;
+            mSize = size;
+        }
+
+        @Override
+        public void paintIcon(Component c, java.awt.Graphics g, int x, int y)
+        {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D)g.create();
+            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(mColor);
+            g2.fillOval(x, y, mSize, mSize);
+            g2.dispose();
+        }
+
+        @Override
+        public int getIconWidth()
+        {
+            return mSize;
+        }
+
+        @Override
+        public int getIconHeight()
+        {
+            return mSize;
         }
     }
 

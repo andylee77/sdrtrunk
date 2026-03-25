@@ -21,6 +21,7 @@ package io.github.dsheirer.module.decode.p25;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.event.EventStatus;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
 import io.github.dsheirer.module.decode.session.ChannelSourceType;
 import io.github.dsheirer.protocol.Protocol;
@@ -29,6 +30,7 @@ public class P25ChannelGrantEvent extends P25DecodeEvent
 {
     private ServiceOptions mServiceOptions;
     private ChannelSourceType mChannelSourceType = ChannelSourceType.UNKNOWN;
+    private EventStatus mEventStatus = EventStatus.ACTIVE_CONTROL;
 
     public P25ChannelGrantEvent(DecodeEventType decodeEventType, long timestamp)
     {
@@ -84,6 +86,22 @@ public class P25ChannelGrantEvent extends P25DecodeEvent
     public void setChannelSourceType(ChannelSourceType channelSourceType)
     {
         mChannelSourceType = channelSourceType;
+    }
+
+    /**
+     * Current status of this event (active, ended, ignored, etc.)
+     */
+    public EventStatus getEventStatus()
+    {
+        return mEventStatus;
+    }
+
+    /**
+     * Sets the event status
+     */
+    public void setEventStatus(EventStatus eventStatus)
+    {
+        mEventStatus = eventStatus;
     }
 
     /**

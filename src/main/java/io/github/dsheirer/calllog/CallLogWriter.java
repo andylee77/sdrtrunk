@@ -152,7 +152,7 @@ public class CallLogWriter implements CallSessionListener
             List<CallEventRecord> events = toEventRecords(session);
             mDatabase.insertSessionWithEvents(record, events);
 
-            mLog.trace("Written session {} to call log: tg={} events={} dur={}ms",
+            mLog.debug("Written session {} to call log: tg={} events={} dur={}ms",
                     session.getSessionId(),
                     record.getTalkgroupId(),
                     events.size(),

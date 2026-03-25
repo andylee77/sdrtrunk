@@ -388,6 +388,12 @@ public class P25CallSessionManager
                 serviceOptions, apco25Channel, encryption, timestamp);
         mActiveSessions.put(key, newSession);
 
+        // Track the FROM radio on the session for future isMatch() veto checks
+        if(fromRadio != null)
+        {
+            newSession.setCurrentFromRadio(fromRadio);
+        }
+
         // Create per-talker event (use timeslot 0 for display — Phase 1 has no meaningful timeslot)
         String sessionDetails = ignoredReason != null ? ignoredReason : context;
         CallSessionEvent sessionEvent = createSessionEvent(newSession, fromRadio, toTalkgroup,
@@ -520,6 +526,12 @@ public class P25CallSessionManager
                 serviceOptions, apco25Channel, encryption, timestamp);
         mActiveSessions.put(key, newSession);
 
+        // Track the FROM radio on the session for future isMatch() veto checks
+        if(fromRadio != null)
+        {
+            newSession.setCurrentFromRadio(fromRadio);
+        }
+
         String sessionDetails = ignoredReason != null ? ignoredReason : context;
         CallSessionEvent sessionEvent = createSessionEvent(newSession, fromRadio, toTalkgroup,
                 decodeEventType, ic, apco25Channel, serviceOptions,
@@ -568,6 +580,29 @@ public class P25CallSessionManager
             if(fromRadio != null)
             {
                 session.updateRadioAffinity(fromRadio.toString(), timestamp);
+
+                // Fallback FROM-radio splitting for systems where control channel grants
+                // lack FROM radio info. If the session was created without a FROM (null)
+                // and the traffic channel now provides one, set it. If the session already
+                // has a FROM and it differs from what traffic channel reports, this is a
+                // different talker — end this session so the next grant creates a new one.
+                Identifier sessionFrom = session.getCurrentFromRadio();
+                if(sessionFrom == null)
+                {
+                    // First identification of FROM radio — set it on the session
+                    session.setCurrentFromRadio(fromRadio);
+                }
+                else if(!sessionFrom.equals(fromRadio))
+                {
+                    // Different FROM radio detected from traffic channel — this shouldn't
+                    // normally happen because control channel grants with different FROM
+                    // are now vetoed by isMatch(). But as a safety net for systems where
+                    // FROM is only available from traffic channel, end this session.
+                    mLog.info("Session {} FROM radio changed via traffic channel: {} → {} — ending session",
+                            session.getSessionId(), sessionFrom, fromRadio);
+                    transitionToEnding(session);
+                    return;
+                }
             }
 
             // Check for encryption from traffic channel (HDU/LDU messages carry EncryptionKeyIdentifier).
@@ -757,6 +792,8 @@ public class P25CallSessionManager
         if(fromRadio != null)
         {
             session.updateRadioAffinity(fromRadio.toString(), timestamp);
+            // Keep the session's current FROM radio in sync with the latest grant
+            session.setCurrentFromRadio(fromRadio);
         }
 
         // Update event type if it upgrades
@@ -953,7 +990,7 @@ public class P25CallSessionManager
             lastEvent.updateEnd(session.getCallEnd());
         }
 
-        mLog.trace("Session complete: {} (events={}, duration={}ms)",
+        mLog.debug("Session complete: {} (events={}, duration={}ms)",
                 session.getSessionId(), session.getEventCount(), session.getDuration());
 
         notifySessionComplete(session);

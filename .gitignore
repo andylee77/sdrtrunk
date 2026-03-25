@@ -36,3 +36,6 @@ gradle-app.setting
 
 # Fork-specific local files
 .clinerules
+logs/
+tools/*_analysis*.txt
+tools/deep_analysis_results.txt

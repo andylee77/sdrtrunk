@@ -268,6 +268,43 @@ Extensive work documents accumulated in `C:\Users\Andy\Projects\SDRTrunk\work_do
 
 ---
 
+## [2026-03-21] Change 013: Call Session FROM-Radio Splitting, Events Status Column & Duplicate Event Fix
+
+### New Files (1)
+- `module/decode/event/EventStatus.java` — Enum with four states: ACTIVE_CONTROL (yellow), ACTIVE_TRAFFIC (green), ENDED (red), IGNORED (gray)
+
+### Modified Files (7)
+- `module/decode/session/CallSession.java` — Added `mCurrentFromRadio` field for tracking which radio is transmitting; `isMatch()` now vetoes same-call when FROM radio differs
+- `module/decode/p25/session/P25CallSessionManager.java` — FROM radio extraction in grant/update processing; session splitting when FROM changes; traffic channel fallback splitting
+- `module/decode/p25/P25ChannelGrantEvent.java` — Added `mEventStatus` field (default: ACTIVE_CONTROL) with getter/setter
+- `module/decode/p25/P25TrafficChannelEventTracker.java` — Status transitions: `updateDurationTraffic()` → ACTIVE_TRAFFIC, `completeTraffic()` → ENDED, `setDetails()` → auto-detects IGNORED keywords
+- `module/decode/p25/P25TrafficChannelManager.java` — Added IGNORED auto-detection in `broadcast(DecodeEvent)` for builder-created events; fixed `processP1TrafficCurrentUser` to update existing tracker instead of creating duplicate events; fixed `processP1ControlAnnouncedTrafficUpdate` to avoid double CSM call
+- `module/decode/event/DecodeEventModel.java` — Added Status column at index 0 (all others shifted +1)
+- `module/decode/event/DecodeEventPanel.java` — Added `StatusCellRenderer` rendering 10×10 colored circles; Status column 24px wide
+
+### Behavior — Issue 1: FROM Radio Session Splitting
+- Call sessions now represent single-user transmissions (per PTT)
+- When FROM radio changes on same talkgroup/frequency, a new session is created
+- Uses "Option C" hybrid approach: TDU → ENDING, different FROM → new session, same FROM within gap → reactivate
+- Fixes inflated call durations where dispatch + field units on same TG were merged
+
+### Behavior — Issue 2: Duplicate Event Fix
+- Fixed race condition where both control channel and traffic channel created separate P25ChannelGrantEvent objects for the same call, causing 4 events instead of 2 in the Events tab
+- `processP1TrafficCurrentUser` now updates existing tracker when FROM differs instead of creating a new event — defers new event creation to control channel's `isDifferentTalker` logic
+- `processP1ControlAnnouncedTrafficUpdate` no longer double-calls CSM when a different call is detected — `processP1ControlDirectedChannelGrant` handles the CSM notification
+
+### Behavior — Issue 3: Events Status Column
+- New leftmost column in Events tab with color-coded status dots
+- Green = active traffic channel processing, Yellow = control channel tracking only
+- Red = call ended, Gray = ignored (encrypted/unmonitored/max channels)
+- Non-P25 events show blank; status updates dynamically as events progress
+
+### Documentation
+- `doc/changes/013_call_session_and_event_fixes.md` — Detailed change doc
+- `doc/design/013_call_session_and_event_fixes.md` — Design analysis (3 issues)
+
+---
+
 ## Pending / Future
 
 - [ ] Finalize PlutoSDR tuner integration with Maia IQ streaming

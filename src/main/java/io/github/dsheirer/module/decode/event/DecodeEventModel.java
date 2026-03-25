@@ -39,19 +39,20 @@ public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implem
 {
     private static final long serialVersionUID = 1L;
     private final static Logger mLog = LoggerFactory.getLogger(DecodeEventModel.class);
-    public static final int COLUMN_TIME = 0;
-    public static final int COLUMN_DURATION = 1;
-    public static final int COLUMN_EVENT = 2;
-    public static final int COLUMN_FROM_ID = 3;
-    public static final int COLUMN_FROM_ALIAS = 4;
-    public static final int COLUMN_TO_ID = 5;
-    public static final int COLUMN_TO_ALIAS = 6;
-    public static final int COLUMN_PATCH_GROUP = 7;
-    public static final int COLUMN_CHANNEL = 8;
-    public static final int COLUMN_FREQUENCY = 9;
-    public static final int COLUMN_DETAILS = 10;
-    public static final int COLUMN_SOURCE = 11;
-    protected String[] mHeaders = new String[]{"Time", "Duration", "Event", "From", "Alias", "To", "Alias", "Patch Group", "Channel", "Frequency", "Details", "Source"};
+    public static final int COLUMN_STATUS = 0;
+    public static final int COLUMN_TIME = 1;
+    public static final int COLUMN_DURATION = 2;
+    public static final int COLUMN_EVENT = 3;
+    public static final int COLUMN_FROM_ID = 4;
+    public static final int COLUMN_FROM_ALIAS = 5;
+    public static final int COLUMN_TO_ID = 6;
+    public static final int COLUMN_TO_ALIAS = 7;
+    public static final int COLUMN_PATCH_GROUP = 8;
+    public static final int COLUMN_CHANNEL = 9;
+    public static final int COLUMN_FREQUENCY = 10;
+    public static final int COLUMN_DETAILS = 11;
+    public static final int COLUMN_SOURCE = 12;
+    protected String[] mHeaders = new String[]{"Status", "Time", "Duration", "Event", "From", "Alias", "To", "Alias", "Patch Group", "Channel", "Frequency", "Details", "Source"};
 
     public DecodeEventModel()
     {
@@ -102,6 +103,12 @@ public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implem
         {
             switch(columnIndex)
             {
+                case COLUMN_STATUS:
+                    if(event instanceof P25ChannelGrantEvent cge)
+                    {
+                        return cge.getEventStatus();
+                    }
+                    return EventStatus.UNKNOWN;
                 case COLUMN_TIME:
                     return event.getTimeStart();
                 case COLUMN_DURATION:
@@ -164,6 +171,8 @@ public class DecodeEventModel extends ClearableHistoryModel<IDecodeEvent> implem
     {
         switch(columnIndex)
         {
+            case COLUMN_STATUS:
+                return EventStatus.class;
             case COLUMN_DURATION:
             case COLUMN_TIME:
                 return Long.class;
