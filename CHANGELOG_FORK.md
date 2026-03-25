@@ -441,8 +441,37 @@ Extensive work documents accumulated in `C:\Users\Andy\Projects\SDRTrunk\work_do
 
 ---
 
+## [2026-03-25] Design 024: Signal Analyzer Tab (Design Complete — Not Yet Implemented)
+
+**Comprehensive design document for automated signal detection, characterization, and protocol identification.**
+
+A new "Signal Analyzer" tab in the main application window providing a 4-layer analysis pipeline:
+1. **Signal Detection** — FFT peak finding from existing DFT data pipeline (4096-bin spectrum)
+2. **Signal Validation** — Harmonic/image/DC spur/noise filtering with automated retune tests
+3. **Signal Characterization** — I/Q sample analysis for modulation classification (FM, 2FSK, 4FSK/C4FM, PSK, AM), symbol rate estimation (300–12000 baud), bandwidth measurement
+4. **Protocol Identification** — Automated decoder trials using SDRTrunk's existing decoders (P25, DMR, LTR, MPT1327, NBFM, AM, etc.) with sync/message scoring
+
+Features:
+- **Auto + Manual modes** — continuous scanning or user-directed per-signal analysis
+- **Signal detail panel** — per-signal channel spectrum view (inspired by Now Playing → Channel tab)
+- **Harmonic/spur detection** — DC spike, image mirror, harmonic relationship flagging
+- **Modulation classification** — envelope analysis, instantaneous frequency, symbol rate estimation
+- **Decoder trial engine** — temporary channel creation, dwell-based sync/message detection
+- **CSV logging** — timestamped signal analysis results
+- **Right-click context menu** — Identify Now, Create Channel, Spur Test, Ignore
+
+Target bands: 400 MHz, 700–900 MHz (and any tuner-visible bandwidth)
+
+Design document: `doc/design/024_signal_analyzer.md`
+Implementation: 3 phases (Phase 1: Detection UI, Phase 2: Characterization, Phase 3: Identification + Logging)
+
+---
+
 ## Pending / Future
 
+- [ ] Signal Analyzer Tab — Phase 1: Tab UI + Signal Detection
+- [ ] Signal Analyzer Tab — Phase 2: Signal Characterization (modulation analysis)
+- [ ] Signal Analyzer Tab — Phase 3: Protocol Identification + Logging
 - [ ] Finalize PlutoSDR tuner integration with Maia IQ streaming
 - [ ] DDC channelizer performance optimization
 - [ ] P25 back-to-back transmission handling fix
