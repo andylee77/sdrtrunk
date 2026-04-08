@@ -232,6 +232,55 @@ with adequate signal strength. Investigation paused — revisit if CRC issues pe
 
 ---
 
+## Branch Merge Strategy: phase4-refactor → plutosdr
+
+The `phase4-refactor` branch contains experimental work (changes 017-024) that is **not yet ready for `plutosdr`**. When ready, changes should be selectively cherry-picked rather than wholesale merged.
+
+### Likely to merge (proven value)
+
+| Change         | Description                                                              | Notes                      |
+|----------------|--------------------------------------------------------------------------|----------------------------|
+| 010 Phases 1-4 | Call session management, Calls tab, SQLite call log, event consolidation | Already on `plutosdr`      |
+| 012            | Traffic channel architecture fixes                                       | Already on `plutosdr`      |
+| 013            | FROM-radio splitting, status column, duplicate event fix                 | Already on `plutosdr`      |
+| 022            | Extended PDU block assembly (5->32 blocks)                               | Low risk, clear value      |
+| 024            | Signal Analyzer tab (Phase 1: detection UI)                              | Self-contained new feature |
+| README         | Fork-specific README                                                     | Simple file replacement    |
+
+### Evaluate before merging (mixed value)
+
+| Change | Description                                                                       | Concern                                                     |
+|--------|-----------------------------------------------------------------------------------|-------------------------------------------------------------|
+| 017    | Data capture improvements (SACCH filter, frequency metadata, protocol detection)  | SACCH filter is useful; rest is data-capture specific       |
+| 018    | LRRP GPS extraction, XCMP/XNL detection                                           | Useful if data capture stays                                |
+| 021    | Zero-payload filter, deep IP analysis                                             | Filter is useful; analysis tools are research artifacts     |
+| 023    | Phase 2 DATCH raw capture                                                         | Research/protocol analysis -- didn't reveal actionable data |
+
+### Probably skip (research artifacts)
+
+| Change              | Description                       | Reason                                             |
+|---------------------|-----------------------------------|----------------------------------------------------|
+| 019                 | Data capture mode & UI columns    | Experimental UI for data exploration               |
+| 020                 | TDMA data capture & corpus decode | Corpus tooling, not production feature             |
+| tools/*.py          | Python analysis scripts           | Research tools, not user-facing                    |
+| doc/design/019-023  | Analysis findings docs            | Valuable as reference but not needed in `plutosdr` |
+
+### How to merge
+
+```bash
+# From plutosdr branch, cherry-pick individual commits:
+git checkout plutosdr
+git cherry-pick <commit-hash>    # one at a time, test between each
+
+# Or for file-level picks:
+git checkout phase4-refactor -- path/to/file
+git commit -m "Cherry-pick: <description>"
+```
+
+After merging desired changes, `phase4-refactor` can be kept as an archive branch or deleted.
+
+---
+
 ## Watch Items / Flags
 
 Things identified during analysis that need attention:

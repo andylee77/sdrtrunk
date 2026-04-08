@@ -11,7 +11,7 @@ sdrtrunk/
 ├── CHANGELOG_FORK.md     ← Fork tracking log (our changes, builds)
 ├── CHANGELOG             ← Upstream changelog (do not modify)
 ├── DEVLOG.md             ← This file (developer reference)
-├── README.md             ← Upstream README
+├── README.md             ← Fork README (replaced upstream)
 ├── build.gradle          ← Gradle build config (Java 25, dependencies, runtime packaging)
 ├── gradle.properties     ← Version: 0.6.2-beta-1
 ├── gradlew / gradlew.bat ← Gradle wrapper scripts
@@ -107,10 +107,11 @@ gradlew clean
 
 ### Branches
 
-| Branch | Purpose |
-|--------|---------|
-| `master` | Tracks upstream, clean for syncing |
-| `plutosdr` | Active development (PlutoSDR + DDC + P25 changes) |
+| Branch             | Purpose                                                                  |
+|--------------------|--------------------------------------------------------------------------|
+| `master`           | Tracks upstream, clean for syncing                                       |
+| `plutosdr`         | Stable development branch (PlutoSDR, UI, P25 core changes 001-013)       |
+| `phase4-refactor`  | Experimental branch (data capture 017-023, signal analyzer 024, README)  |
 
 ### Upstream Sync
 
@@ -151,4 +152,5 @@ Located at `C:\Users\Andy\Projects\SDRTrunk\work_docs\`:
 | 2026-03-08 | Project setup | Forked repo, created plutosdr branch, set up workspace docs |
 | 2026-03-08 | Migration analysis | Diffed modified source against fresh clone, identified 81 changed files across 13 categories. Created `DEVPLAN.md` with full migration work plan. Phase 1 (PlutoSDR, 22 items) and Phase 2 (Waterfall/Spectrum, 5 items) prioritized. DDC channelizer explicitly skipped. Updated `.clinerules` to clarify `doc/changes/` is for completed changes only. |
 | 2026-03-08 | PlutoSDR companion tools | Added `tools/plutosdr/` with the 3 essential files from the migration source: `pluto_server.py` (companion TCP server), `README.md` (setup guide + protocol reference), `poll_device.py` (device utility). ~70 other files in the migration source (server variants, test scripts, investigation docs) left in `work_docs/` — they're dev artifacts, not user-facing. |
+| 2026-04-07 | Branch strategy & docs | Replaced upstream README with fork-specific README. Committed all pending changes 017-024 on `phase4-refactor`. Updated DEVLOG branches table and DEVPLAN merge strategy. `phase4-refactor` stays separate from `plutosdr` — selective cherry-pick merge planned later for proven changes (call session, signal analyzer). Data capture experiments (017-023) may not merge. |
 | 2026-03-09 | P25 CRC investigation | Investigated DEVPLAN items 3.2.5–3.2.10 (the 4 priority P25 files recommended for CRC error analysis). **Result: no functional changes found.** MessageFramer +86 lines = debug logging only (NID decode tracing via SLF4J + JsonActivityRecorder). DecoderLSM, DecoderC4FM, MessageAssembler = logger variable renames (LOGGER→mLog). DemodulatorLSM = unused logger field added. CRC errors determined to be signal-quality related, not a code bug — working OK with adequate signal. Updated DEVPLAN section 3.2 with findings and next-steps if issue recurs (BCH decoder, demodulators, BinaryMessage). Investigation paused. |
