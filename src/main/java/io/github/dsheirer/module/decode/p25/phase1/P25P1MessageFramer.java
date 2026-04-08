@@ -38,6 +38,8 @@ import io.github.dsheirer.module.decode.p25.phase1.sync.P25P1SoftSyncDetector;
 import io.github.dsheirer.module.decode.p25.phase1.sync.P25P1SoftSyncDetectorFactory;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Provides message framing for the demodulated dibit stream.  This framer is notified by an external sync detection
@@ -48,8 +50,39 @@ import io.github.dsheirer.sample.Listener;
  */
 public class P25P1MessageFramer
 {
+    private static final Logger LOGGER = LoggerFactory.getLogger(P25P1MessageFramer.class);
     private static final int DIBIT_LENGTH_NID = 33; //32 dibits (64 bits) +1 status
     private static final float SYNC_DETECTION_THRESHOLD = 60;
+
+    /**
+     * Maximum number of PDU data blocks to assemble per sequence. The P25 protocol allows up to 127 blocks
+     * (7-bit BLOCKS_TO_FOLLOW field), but we cap at 32 for safety against corrupted headers.
+     */
+    private static final int MAX_PDU_DATA_BLOCKS = 32;
+
+    /**
+     * Message length increment per additional PDU data block beyond block 5.
+     * Each block adds 196 bits of data + 14 bits of null padding = 210 bits.
+     */
+    private static final int EXTENDED_BLOCK_MESSAGE_LENGTH_INCREMENT = 210;
+
+    /**
+     * Elapsed dibit increment per additional PDU data block beyond block 5.
+     * Each block adds 105 message dibits + 3 status dibits = 108 elapsed dibits.
+     */
+    private static final int EXTENDED_BLOCK_ELAPSED_DIBIT_INCREMENT = 108;
+
+    /**
+     * Message length (in bits) for the assembler when PDU BLOCK_5 is complete.
+     * This is the base from which extended block message lengths are computed.
+     */
+    private static final int BLOCK_5_MESSAGE_LENGTH = 1218;
+
+    /**
+     * Elapsed dibit length for PDU sequence through BLOCK_5.
+     * This is the base from which extended block elapsed dibits are computed.
+     */
+    private static final int BLOCK_5_ELAPSED_DIBITS = 684;
     private final BCH_63_16_23_P25 mBCHDecoder = new BCH_63_16_23_P25();
     private static final IntField NAC_FIELD = IntField.length12(0);
     private static final IntField DUID_FIELD = IntField.length4(12);
@@ -249,6 +282,7 @@ public class P25P1MessageFramer
                 case PACKET_DATA_UNIT_BLOCK_3:
                 case PACKET_DATA_UNIT_BLOCK_4:
                 case PACKET_DATA_UNIT_BLOCK_5:
+                case PACKET_DATA_UNIT_BLOCK_EXTENDED:
                     dispatchPDU();
                     break;
                 case TERMINATOR_DATA_UNIT:
@@ -485,6 +519,17 @@ public class P25P1MessageFramer
 
                     if(mPDUSequence.getHeader().isValid() && mPDUSequence.getHeader().getBlocksToFollowCount() > 0)
                     {
+                        int blocksToFollow = mPDUSequence.getHeader().getBlocksToFollowCount();
+
+                        if(blocksToFollow > 5)
+                        {
+                            LOGGER.info("PDU header: {} blocks to follow (extended assembly will be used), " +
+                                    "format={}, confirmed={}, LLID={}",
+                                    blocksToFollow, mPDUSequence.getHeader().getFormat(),
+                                    mPDUSequence.getHeader().isConfirmationRequired(),
+                                    mPDUSequence.getHeader().getTargetLLID());
+                        }
+
                         //Setup to catch the sequence of data blocks that follow the header
                         mMessageAssembler.reconfigure(P25P1DataUnitID.PACKET_DATA_UNIT_BLOCK_1);
                     }
@@ -639,8 +684,34 @@ public class P25P1MessageFramer
                         mPDUSequence.addDataBlock(PDUMessageFactory.createUnconfirmedDataBlock(messageB5));
                     }
 
-                    adjustDibitCounterFromMessageAssembler();
-                    dispatchPDUSequence();
+                    if(mPDUSequence.isComplete())
+                    {
+                        adjustDibitCounterFromMessageAssembler();
+                        dispatchPDUSequence();
+                    }
+                    else
+                    {
+                        int blocksToFollow = mPDUSequence.getHeader().getBlocksToFollowCount();
+
+                        if(blocksToFollow <= MAX_PDU_DATA_BLOCKS)
+                        {
+                            //Continue assembling extended data blocks beyond the original 5-block limit
+                            LOGGER.info("PDU extended block assembly: header requests {} blocks (>5), continuing",
+                                    blocksToFollow);
+                            int nextMessageLength = getExtendedBlockMessageLength(6);
+                            mMessageAssembler.reconfigure(P25P1DataUnitID.PACKET_DATA_UNIT_BLOCK_EXTENDED,
+                                    nextMessageLength);
+                        }
+                        else
+                        {
+                            //Safety limit: dispatch what we have for unreasonably large block counts
+                            LOGGER.warn("PDU header requests {} blocks (exceeds max {}), dispatching partial sequence " +
+                                    "with {} blocks", blocksToFollow, MAX_PDU_DATA_BLOCKS,
+                                    mPDUSequence.getDataBlocks().size());
+                            adjustDibitCounterFromMessageAssembler();
+                            dispatchPDUSequence();
+                        }
+                    }
                 }
                 else
                 {
@@ -648,11 +719,85 @@ public class P25P1MessageFramer
                     mMessageAssembler = null;
                 }
                 break;
+            case PACKET_DATA_UNIT_BLOCK_EXTENDED:
+                dispatchExtendedPDUBlock();
+                break;
             default:
                 System.out.println("Unexpected PDU DUID: " + mMessageAssembler.getMessage());
                 mMessageAssembler = null;
                 mPDUSequence = null;
         }
+    }
+
+    /**
+     * Processes an extended PDU data block (block 6 and beyond). Uses the PDU sequence's current data block count
+     * to determine the correct offset for extracting the next block from the assembler's message buffer.
+     */
+    private void dispatchExtendedPDUBlock()
+    {
+        if(mPDUSequence != null)
+        {
+            //Block number is 1-indexed: dataBlocks.size() gives the number of blocks already added (0..N-1),
+            //so the next block number to add is size + 1
+            int nextBlockNumber = mPDUSequence.getDataBlocks().size() + 1;
+            int startOffset = 196 * nextBlockNumber;
+            int endOffset = startOffset + 196;
+
+            CorrectedBinaryMessage blockMessage = mMessageAssembler.getMessage().getSubMessage(startOffset, endOffset);
+
+            if(mPDUSequence.getHeader().isConfirmationRequired())
+            {
+                mPDUSequence.addDataBlock(PDUMessageFactory.createConfirmedDataBlock(blockMessage));
+            }
+            else
+            {
+                mPDUSequence.addDataBlock(PDUMessageFactory.createUnconfirmedDataBlock(blockMessage));
+            }
+
+            int currentBlockCount = mPDUSequence.getDataBlocks().size();
+
+            if(mPDUSequence.isComplete() || currentBlockCount >= MAX_PDU_DATA_BLOCKS)
+            {
+                if(currentBlockCount > 5)
+                {
+                    LOGGER.info("PDU extended sequence complete: {} data blocks assembled ({} bytes payload)",
+                            currentBlockCount,
+                            mPDUSequence.getHeader().isConfirmationRequired() ?
+                                    currentBlockCount * 16 : currentBlockCount * 12);
+                }
+
+                //Compute dynamic elapsed dibit length for the extended sequence
+                int elapsedDibits = BLOCK_5_ELAPSED_DIBITS +
+                        (currentBlockCount - 5) * EXTENDED_BLOCK_ELAPSED_DIBIT_INCREMENT;
+                mDibitCounter -= elapsedDibits;
+                dispatchPDUSequence();
+            }
+            else
+            {
+                //Continue assembling: compute message length for the next block
+                int nextBlockToAssemble = currentBlockCount + 1;
+                int nextMessageLength = getExtendedBlockMessageLength(nextBlockToAssemble);
+                mMessageAssembler.reconfigure(P25P1DataUnitID.PACKET_DATA_UNIT_BLOCK_EXTENDED, nextMessageLength);
+            }
+        }
+        else
+        {
+            //No PDU sequence active - clean up
+            mDibitCounter -= BLOCK_5_ELAPSED_DIBITS; //Best-effort adjustment
+            mMessageAssembler = null;
+        }
+    }
+
+    /**
+     * Computes the assembler message length (in bits, including null padding) for an extended PDU data block.
+     * The pattern from blocks 2-5 is that each additional block adds 210 bits (196 data + 14 null padding).
+     *
+     * @param blockNumber the 1-indexed block number (must be > 5)
+     * @return the total assembler message length in bits for a sequence containing up to this block number
+     */
+    private static int getExtendedBlockMessageLength(int blockNumber)
+    {
+        return BLOCK_5_MESSAGE_LENGTH + (blockNumber - 5) * EXTENDED_BLOCK_MESSAGE_LENGTH_INCREMENT;
     }
 
     /**

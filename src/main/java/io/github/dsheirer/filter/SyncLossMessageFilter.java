@@ -37,7 +37,9 @@ public class SyncLossMessageFilter extends Filter<IMessage,String>
     public SyncLossMessageFilter()
     {
         super("Sync Loss Messages");
-        add(new FilterElement<>(SYNC_LOSS_KEY));
+        // Default to disabled — these high-volume messages clutter the Messages tab.
+        // Users can re-enable via the Filters dialog if needed.
+        add(new FilterElement<>(SYNC_LOSS_KEY, false));
     }
 
     @Override

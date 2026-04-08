@@ -106,6 +106,7 @@ import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.module.demodulate.fm.FMDemodulatorModule;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.SourceType;
+import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitor;
 import java.util.ArrayList;
@@ -263,6 +264,22 @@ public class DecoderFactory
         // P25 Deep Data Capture — intercepts all messages to extract raw payloads (Phase 2)
         P25DataCaptureModule dataCaptureP2 = new P25DataCaptureModule();
         dataCaptureP2.setSystemName(channel.hasSystem() ? channel.getSystem() : channel.getName());
+        dataCaptureP2.setChannelMode("TDMA");
+
+        // Always set frequency from channel source config for control/standalone channels
+        // (traffic channels override this below with the channelDescriptor frequency)
+        if(channel.getSourceConfiguration() instanceof SourceConfigTuner sctP2)
+        {
+            dataCaptureP2.setChannelFrequency(sctP2.getFrequency());
+            dataCaptureP2.setChannelDescriptor(channel.getName());
+        }
+        else if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sctmfP2
+                && sctmfP2.getFrequencies() != null && !sctmfP2.getFrequencies().isEmpty())
+        {
+            dataCaptureP2.setChannelFrequency(sctmfP2.getFrequencies().get(0));
+            dataCaptureP2.setChannelDescriptor(channel.getName());
+        }
+
         if(channel.getChannelType() == ChannelType.STANDARD && p25TrafficChannelManager != null)
         {
             // Control channel — store reference on TCM for traffic channels to find
@@ -275,6 +292,13 @@ public class DecoderFactory
             if(parentDataCapture != null)
             {
                 dataCaptureP2.setParentModule(parentDataCapture);
+            }
+
+            // Set traffic channel frequency/descriptor so payloads include source context (Change 017)
+            if(channelDescriptor != null)
+            {
+                dataCaptureP2.setChannelFrequency(channelDescriptor.getDownlinkFrequency());
+                dataCaptureP2.setChannelDescriptor(channelDescriptor.toString());
             }
         }
         modules.add(dataCaptureP2);
@@ -341,6 +365,22 @@ public class DecoderFactory
         // P25 Deep Data Capture — intercepts all messages to extract raw payloads
         P25DataCaptureModule dataCaptureP1 = new P25DataCaptureModule();
         dataCaptureP1.setSystemName(channel.hasSystem() ? channel.getSystem() : channel.getName());
+        dataCaptureP1.setChannelMode("FDMA");
+
+        // Always set frequency from channel source config for control/standalone channels
+        // (traffic channels override this below with the channelDescriptor frequency)
+        if(channel.getSourceConfiguration() instanceof SourceConfigTuner sctP1)
+        {
+            dataCaptureP1.setChannelFrequency(sctP1.getFrequency());
+            dataCaptureP1.setChannelDescriptor(channel.getName());
+        }
+        else if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sctmfP1
+                && sctmfP1.getFrequencies() != null && !sctmfP1.getFrequencies().isEmpty())
+        {
+            dataCaptureP1.setChannelFrequency(sctmfP1.getFrequencies().get(0));
+            dataCaptureP1.setChannelDescriptor(channel.getName());
+        }
+
         if(channel.getChannelType() == ChannelType.STANDARD && p1TrafficChannelManager != null)
         {
             // Control channel — store reference on TCM for traffic channels to find
@@ -353,6 +393,13 @@ public class DecoderFactory
             if(parentDataCapture != null)
             {
                 dataCaptureP1.setParentModule(parentDataCapture);
+            }
+
+            // Set traffic channel frequency/descriptor so payloads include source context (Change 017)
+            if(channelDescriptor != null)
+            {
+                dataCaptureP1.setChannelFrequency(channelDescriptor.getDownlinkFrequency());
+                dataCaptureP1.setChannelDescriptor(channelDescriptor.toString());
             }
         }
         modules.add(dataCaptureP1);

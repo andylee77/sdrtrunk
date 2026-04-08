@@ -44,6 +44,7 @@ public class CapturedPayload
         TSBK_MOTOROLA("TSBK-M"),
         TSBK_STANDARD("TSBK"),
         LC_DATA("LC"),
+        DATCH_RAW("DATCH"),
         UNKNOWN("UNK");
 
         private final String mShortLabel;
@@ -70,9 +71,14 @@ public class CapturedPayload
     private final String mToId;
     private final String mChannel;
     private final long mFrequency;
+    private final String mMode;
     private final String mDetectedProtocol;
     private final String mSapOrOpcode;
     private final int mPayloadLength;
+    private final double mLatitude;
+    private final double mLongitude;
+    private final double mHeading;
+    private final double mSpeed;
 
     private CapturedPayload(Builder builder)
     {
@@ -87,9 +93,14 @@ public class CapturedPayload
         mToId = builder.mToId;
         mChannel = builder.mChannel;
         mFrequency = builder.mFrequency;
+        mMode = builder.mMode;
         mDetectedProtocol = builder.mDetectedProtocol;
         mSapOrOpcode = builder.mSapOrOpcode;
         mPayloadLength = builder.mPayloadLength;
+        mLatitude = builder.mLatitude;
+        mLongitude = builder.mLongitude;
+        mHeading = builder.mHeading;
+        mSpeed = builder.mSpeed;
     }
 
     public long getTimestamp() { return mTimestamp; }
@@ -103,9 +114,62 @@ public class CapturedPayload
     public String getToId() { return mToId; }
     public String getChannel() { return mChannel; }
     public long getFrequency() { return mFrequency; }
+    public String getMode() { return mMode; }
     public String getDetectedProtocol() { return mDetectedProtocol; }
     public String getSapOrOpcode() { return mSapOrOpcode; }
     public int getPayloadLength() { return mPayloadLength; }
+    public double getLatitude() { return mLatitude; }
+    public double getLongitude() { return mLongitude; }
+    public double getHeading() { return mHeading; }
+    public double getSpeed() { return mSpeed; }
+
+    /**
+     * Returns the frequency formatted as MHz for display, or empty string if 0.
+     * Example: 856712500 → "856.7125"
+     */
+    public String getFrequencyDisplay()
+    {
+        if(mFrequency == 0)
+        {
+            return "";
+        }
+        return String.format("%.4f", mFrequency / 1_000_000.0);
+    }
+
+    /**
+     * Returns true if this payload contains valid GPS coordinates.
+     */
+    public boolean hasGpsCoordinates()
+    {
+        return !Double.isNaN(mLatitude) && !Double.isNaN(mLongitude);
+    }
+
+    /**
+     * Returns a formatted GPS coordinate string for display, or empty string if no coordinates.
+     * Format: "lat, lon" with optional heading/speed.
+     */
+    public String getGpsDisplay()
+    {
+        if(!hasGpsCoordinates())
+        {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("%.6f, %.6f", mLatitude, mLongitude));
+
+        if(!Double.isNaN(mHeading))
+        {
+            sb.append(String.format(" hdg:%.0f\u00B0", mHeading));
+        }
+
+        if(!Double.isNaN(mSpeed))
+        {
+            sb.append(String.format(" spd:%.1fkm/h", mSpeed));
+        }
+
+        return sb.toString();
+    }
 
     /**
      * Returns detected strings as a comma-separated string for display.
@@ -137,7 +201,25 @@ public class CapturedPayload
         appendJsonField(sb, "len", mPayloadLength, false);
         appendJsonStringField(sb, "hex", mHexDump, false);
         appendJsonStringField(sb, "proto", mDetectedProtocol, false);
+        appendJsonStringField(sb, "mode", mMode, false);
         appendJsonStringField(sb, "details", escapeJson(mDetails), false);
+
+        // GPS coordinates (only include if present)
+        if(hasGpsCoordinates())
+        {
+            appendJsonDoubleField(sb, "lat", mLatitude, false);
+            appendJsonDoubleField(sb, "lon", mLongitude, false);
+
+            if(!Double.isNaN(mHeading))
+            {
+                appendJsonDoubleField(sb, "heading", mHeading, false);
+            }
+
+            if(!Double.isNaN(mSpeed))
+            {
+                appendJsonDoubleField(sb, "speed", mSpeed, false);
+            }
+        }
 
         // Strings array
         sb.append(",\"strings\":[");
@@ -162,6 +244,12 @@ public class CapturedPayload
     {
         if(!first) sb.append(",");
         sb.append("\"").append(key).append("\":\"").append(value != null ? value : "").append("\"");
+    }
+
+    private void appendJsonDoubleField(StringBuilder sb, String key, double value, boolean first)
+    {
+        if(!first) sb.append(",");
+        sb.append("\"").append(key).append("\":").append(String.format("%.8f", value));
     }
 
     private String escapeJson(String s)
@@ -191,9 +279,14 @@ public class CapturedPayload
         private String mToId = "";
         private String mChannel = "";
         private long mFrequency;
+        private String mMode = "";
         private String mDetectedProtocol = "";
         private String mSapOrOpcode = "";
         private int mPayloadLength;
+        private double mLatitude = Double.NaN;
+        private double mLongitude = Double.NaN;
+        private double mHeading = Double.NaN;
+        private double mSpeed = Double.NaN;
 
         private Builder(PayloadType type, long timestamp)
         {
@@ -210,9 +303,14 @@ public class CapturedPayload
         public Builder toId(String toId) { mToId = toId; return this; }
         public Builder channel(String channel) { mChannel = channel; return this; }
         public Builder frequency(long frequency) { mFrequency = frequency; return this; }
+        public Builder mode(String mode) { mMode = mode != null ? mode : ""; return this; }
         public Builder detectedProtocol(String protocol) { mDetectedProtocol = protocol; return this; }
         public Builder sapOrOpcode(String sapOrOpcode) { mSapOrOpcode = sapOrOpcode; return this; }
         public Builder payloadLength(int length) { mPayloadLength = length; return this; }
+        public Builder latitude(double latitude) { mLatitude = latitude; return this; }
+        public Builder longitude(double longitude) { mLongitude = longitude; return this; }
+        public Builder heading(double heading) { mHeading = heading; return this; }
+        public Builder speed(double speed) { mSpeed = speed; return this; }
 
         public CapturedPayload build()
         {

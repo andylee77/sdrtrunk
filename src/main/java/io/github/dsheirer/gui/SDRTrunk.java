@@ -32,6 +32,8 @@ import io.github.dsheirer.controller.channel.ChannelAutoStartFrame;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelSelectionManager;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.gui.analyzer.SignalAnalyzerController;
+import io.github.dsheirer.gui.analyzer.SignalAnalyzerPanel;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.playlist.ViewPlaylistRequest;
 import io.github.dsheirer.gui.preference.CalibrateRequest;
@@ -247,6 +249,18 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         TunerSpectralDisplayManager tunerSpectralDisplayManager = new TunerSpectralDisplayManager(mSpectralPanel,
             mPlaylistManager, mSettingsManager, mTunerManager.getDiscoveredTunerModel());
+
+        // Wire the Signal Analyzer: connect the DFT feed and source events from the spectral display
+        // to the analyzer controller so it can detect signals in the FFT data
+        if(mControllerPanel != null)
+        {
+            SignalAnalyzerPanel analyzerPanel = mControllerPanel.getSignalAnalyzerPanel();
+            SignalAnalyzerController analyzerController = analyzerPanel.getController();
+            mSpectralPanel.addDftResultsListener(analyzerController);
+            analyzerController.setSpectralPanel(mSpectralPanel);
+            // Phase 3: Wire ChannelProcessingManager for decoder trial identification
+            analyzerController.setChannelProcessingManager(mPlaylistManager.getChannelProcessingManager());
+        }
         mTunerManager.getDiscoveredTunerModel().addListener(tunerSpectralDisplayManager);
         mTunerManager.getDiscoveredTunerModel().addListener(this);
 

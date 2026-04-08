@@ -294,18 +294,33 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
         return mFrequencyController.getBandwidth();
     }
 
+    /** Frequency lock state — when true, PolyphaseChannelSourceManager will not retune. */
+    private volatile boolean mFrequencyLocked = false;
+
     /**
      * Indicates if the tuner's centre frequency is locked and should not be changed by the
      * PolyphaseChannelSourceManager when channels are activated.
      *
-     * <p>The default implementation returns {@code false}.  Subclasses (e.g. PlutoSdrTunerController)
-     * may override this to return a user-configurable lock state.</p>
+     * <p>The default implementation uses an internal flag that can be set via
+     * {@link #setFrequencyLocked(boolean)}.  Subclasses (e.g. PlutoSdrTunerController)
+     * may override this to use a different storage mechanism.</p>
      *
      * @return {@code true} if the centre frequency is locked, {@code false} otherwise
      */
     public boolean isFrequencyLocked()
     {
-        return false;
+        return mFrequencyLocked;
+    }
+
+    /**
+     * Sets the frequency lock state.  When locked, the PolyphaseChannelSourceManager
+     * will not retune the centre frequency when channels are activated.
+     *
+     * @param locked {@code true} to lock, {@code false} to unlock
+     */
+    public void setFrequencyLocked(boolean locked)
+    {
+        mFrequencyLocked = locked;
     }
 
     /**

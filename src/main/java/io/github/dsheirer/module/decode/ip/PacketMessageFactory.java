@@ -129,6 +129,7 @@ public class PacketMessageFactory
             case 4001: //Location Service
                 return new LRRPPacket(binaryMessage, offset);
             case 4004: //XCMP Service
+            case 64414: //XCMP/XNL Device Management (non-standard Motorola port)
                 return new XCMPPacket(binaryMessage, offset);
             case 4005: //Automatic Registration Service
                 return new ARSPacket(binaryMessage, offset);

@@ -36,18 +36,22 @@ public class DataCaptureModel extends AbstractTableModel implements Listener<Cap
 
     public static final int COLUMN_TIME = 0;
     public static final int COLUMN_TYPE = 1;
-    public static final int COLUMN_SAP_OPCODE = 2;
-    public static final int COLUMN_FROM = 3;
-    public static final int COLUMN_TO = 4;
-    public static final int COLUMN_LENGTH = 5;
-    public static final int COLUMN_PROTOCOL = 6;
-    public static final int COLUMN_HEX = 7;
-    public static final int COLUMN_STRINGS = 8;
-    public static final int COLUMN_DETAILS = 9;
-    public static final int COLUMN_COUNT = 10;
+    public static final int COLUMN_MODE = 2;
+    public static final int COLUMN_CHANNEL = 3;
+    public static final int COLUMN_FREQ = 4;
+    public static final int COLUMN_SAP_OPCODE = 5;
+    public static final int COLUMN_FROM = 6;
+    public static final int COLUMN_TO = 7;
+    public static final int COLUMN_LENGTH = 8;
+    public static final int COLUMN_PROTOCOL = 9;
+    public static final int COLUMN_GPS = 10;
+    public static final int COLUMN_HEX = 11;
+    public static final int COLUMN_STRINGS = 12;
+    public static final int COLUMN_DETAILS = 13;
+    public static final int COLUMN_COUNT = 14;
 
     private static final String[] COLUMN_NAMES = {
-        "Time", "Type", "SAP/Opcode", "From", "To", "Len", "Protocol", "Hex", "Strings", "Details"
+        "Time", "Type", "Mode", "Channel", "Freq (MHz)", "SAP/Opcode", "From", "To", "Len", "Protocol", "GPS", "Hex", "Strings", "Details"
     };
 
     private static final int MAX_HISTORY = 500;
@@ -61,10 +65,20 @@ public class DataCaptureModel extends AbstractTableModel implements Listener<Cap
     /**
      * Receives a new captured payload from the P25DataCaptureModule.
      * Adds to the front of the list and trims if exceeding max history.
+     *
+     * Change 021: Safety filter — skip zero-payload records at the UI level.
+     * The primary filter is in P25DataCaptureModule.emit(), but this provides
+     * belt-and-suspenders protection so the Data tab never shows empty records.
      */
     @Override
     public void receive(CapturedPayload payload)
     {
+        // Safety: skip zero-payload records (primary filter is in P25DataCaptureModule.emit)
+        if(payload.getPayloadLength() == 0)
+        {
+            return;
+        }
+
         EventQueue.invokeLater(() -> {
             mPayloads.addFirst(payload);
 
@@ -140,6 +154,12 @@ public class DataCaptureModel extends AbstractTableModel implements Listener<Cap
                 return cp.getTimestamp();
             case COLUMN_TYPE:
                 return cp.getType().getShortLabel();
+            case COLUMN_MODE:
+                return cp.getMode();
+            case COLUMN_CHANNEL:
+                return cp.getChannel();
+            case COLUMN_FREQ:
+                return cp.getFrequencyDisplay();
             case COLUMN_SAP_OPCODE:
                 return cp.getSapOrOpcode();
             case COLUMN_FROM:
@@ -150,6 +170,8 @@ public class DataCaptureModel extends AbstractTableModel implements Listener<Cap
                 return cp.getPayloadLength();
             case COLUMN_PROTOCOL:
                 return cp.getDetectedProtocol();
+            case COLUMN_GPS:
+                return cp.getGpsDisplay();
             case COLUMN_HEX:
                 return cp.getHexDump();
             case COLUMN_STRINGS:

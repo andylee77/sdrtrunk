@@ -59,6 +59,8 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
 import java.util.ArrayList;
 import java.util.Hashtable;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import net.miginfocom.swing.MigLayout;
 import org.apache.commons.math3.util.FastMath;
 import org.slf4j.Logger;
@@ -109,6 +111,7 @@ public class SpectralDisplayPanel extends JPanel
     private SettingsManager mSettingsManager;
     private DiscoveredTunerModel mDiscoveredTunerModel;
     private Tuner mTuner;
+    private final List<ISourceEventProcessor> mAdditionalSourceEventProcessors = new CopyOnWriteArrayList<>();
 
     /**
      * Spectral Display Panel provides a frequency component display with a
@@ -403,10 +406,59 @@ public class SpectralDisplayPanel extends JPanel
 
     /**
      * Receives frequency change events -- primarily from tuner components.
+     * Also forwards to any additional registered source event processors (e.g., Signal Analyzer).
      */
     public void process(SourceEvent event)
     {
         mOverlayPanel.process(event);
+
+        // Forward to additional processors (e.g., Signal Analyzer)
+        for(ISourceEventProcessor processor : mAdditionalSourceEventProcessors)
+        {
+            try
+            {
+                processor.process(event);
+            }
+            catch(Exception e)
+            {
+                mLog.error("Error forwarding source event to additional processor", e);
+            }
+        }
+    }
+
+    /**
+     * Register an additional ISourceEventProcessor to receive source events
+     * (frequency changes, sample rate changes, etc.) forwarded from the tuner.
+     * Used by the Signal Analyzer to track the current tuner frequency/bandwidth.
+     */
+    public void addSourceEventProcessor(ISourceEventProcessor processor)
+    {
+        mAdditionalSourceEventProcessors.add(processor);
+    }
+
+    /**
+     * Remove a previously registered ISourceEventProcessor.
+     */
+    public void removeSourceEventProcessor(ISourceEventProcessor processor)
+    {
+        mAdditionalSourceEventProcessors.remove(processor);
+    }
+
+    /**
+     * Register an additional DFTResultsListener to receive processed FFT data (dB values).
+     * Used by the Signal Analyzer to tap into the existing FFT pipeline.
+     */
+    public void addDftResultsListener(DFTResultsListener listener)
+    {
+        mDFTConverter.addListener(listener);
+    }
+
+    /**
+     * Remove a previously registered DFTResultsListener.
+     */
+    public void removeDftResultsListener(DFTResultsListener listener)
+    {
+        mDFTConverter.removeListener(listener);
     }
 
     /**

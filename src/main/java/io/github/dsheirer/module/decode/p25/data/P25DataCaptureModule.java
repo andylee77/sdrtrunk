@@ -20,11 +20,22 @@ package io.github.dsheirer.module.decode.p25.data;
 
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.IMessageListener;
 import io.github.dsheirer.module.Module;
+import io.github.dsheirer.module.decode.ip.IPacket;
+import io.github.dsheirer.module.decode.ip.ipv4.IPV4Packet;
+import io.github.dsheirer.module.decode.ip.mototrbo.lrrp.LRRPPacket;
+import io.github.dsheirer.module.decode.ip.mototrbo.lrrp.LRRPPacketType;
+import io.github.dsheirer.module.decode.ip.mototrbo.lrrp.token.Heading;
+import io.github.dsheirer.module.decode.ip.mototrbo.lrrp.token.Point2d;
+import io.github.dsheirer.module.decode.ip.mototrbo.lrrp.token.Speed;
+import io.github.dsheirer.module.decode.ip.mototrbo.lrrp.token.Token;
+import io.github.dsheirer.module.decode.ip.mototrbo.xcmp.XCMPPacket;
+import io.github.dsheirer.module.decode.ip.udp.UDPPacket;
 import io.github.dsheirer.module.decode.p25.data.CapturedPayload.PayloadType;
 import io.github.dsheirer.module.decode.p25.phase1.message.ldu.LDU1Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.ldu.LDU2Message;
@@ -40,6 +51,7 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MacStructure;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.UnknownMacStructure;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.UnknownVendorMessage;
+import io.github.dsheirer.module.decode.p25.phase2.timeslot.DatchTimeslot;
 import io.github.dsheirer.sample.Listener;
 import java.io.BufferedWriter;
 import java.io.File;
@@ -101,6 +113,23 @@ public class P25DataCaptureModule extends Module implements IMessageListener
     private PrintWriter mCorpusWriter;
     private String mCurrentLogDate;
 
+    /** Traffic channel frequency (Hz) — set by DecoderFactory for traffic channels, 0 for control */
+    private long mChannelFrequency;
+
+    /** Traffic channel descriptor string — set by DecoderFactory for traffic channels */
+    private String mChannelDescriptor = "";
+
+    /** Channel mode — "FDMA" for Phase 1, "TDMA" for Phase 2, set by DecoderFactory */
+    private String mChannelMode = "";
+
+    /**
+     * Tracks the last TDMA data channel details string per timeslot for deduplication.
+     * Key: "TS1" or "TS2", Value: last details string emitted.
+     * Used to suppress repetitive MotorolaTDMADataChannel IDLE messages (Priority 1 filter).
+     */
+    private String mLastTdmaDataDetailsTS1 = "";
+    private String mLastTdmaDataDetailsTS2 = "";
+
     private boolean mRunning = false;
 
     public P25DataCaptureModule()
@@ -149,6 +178,64 @@ public class P25DataCaptureModule extends Module implements IMessageListener
         return mSystemName;
     }
 
+    /**
+     * Sets the traffic channel frequency for this module.
+     * Called by DecoderFactory when creating traffic channel modules so that
+     * captured payloads include the frequency they were captured on.
+     *
+     * @param frequency in Hertz, or 0 for control channel
+     */
+    public void setChannelFrequency(long frequency)
+    {
+        mChannelFrequency = frequency;
+    }
+
+    /**
+     * Returns the channel frequency (Hz), or 0 if not set.
+     */
+    public long getChannelFrequency()
+    {
+        return mChannelFrequency;
+    }
+
+    /**
+     * Sets the traffic channel descriptor string for this module.
+     * Called by DecoderFactory when creating traffic channel modules.
+     *
+     * @param descriptor channel descriptor string (e.g., "0-1029")
+     */
+    public void setChannelDescriptor(String descriptor)
+    {
+        mChannelDescriptor = descriptor != null ? descriptor : "";
+    }
+
+    /**
+     * Returns the channel descriptor string, or empty string if not set.
+     */
+    public String getChannelDescriptor()
+    {
+        return mChannelDescriptor;
+    }
+
+    /**
+     * Sets the channel mode for this module (FDMA or TDMA).
+     * Called by DecoderFactory when creating the module.
+     *
+     * @param mode "FDMA" for Phase 1 or "TDMA" for Phase 2
+     */
+    public void setChannelMode(String mode)
+    {
+        mChannelMode = mode != null ? mode : "";
+    }
+
+    /**
+     * Returns the channel mode ("FDMA", "TDMA"), or empty string if not set.
+     */
+    public String getChannelMode()
+    {
+        return mChannelMode;
+    }
+
     @Override
     public Listener<IMessage> getMessageListener()
     {
@@ -160,7 +247,10 @@ public class P25DataCaptureModule extends Module implements IMessageListener
      */
     public void addPayloadListener(Listener<CapturedPayload> listener)
     {
-        mPayloadListeners.add(listener);
+        if(!mPayloadListeners.contains(listener))
+        {
+            mPayloadListeners.add(listener);
+        }
     }
 
     /**
@@ -239,6 +329,10 @@ public class P25DataCaptureModule extends Module implements IMessageListener
             {
                 processTSBK(tsbk);
             }
+            else if(message instanceof DatchTimeslot datch)
+            {
+                processDatchTimeslot(datch);
+            }
             else if(message instanceof MacMessage mac)
             {
                 processMacMessage(mac);
@@ -252,6 +346,11 @@ public class P25DataCaptureModule extends Module implements IMessageListener
 
     /**
      * Process a fully reassembled PacketMessage — extract the payload bytes.
+     *
+     * Change 018: Walks the parsed packet hierarchy to detect LRRP and XCMP packets:
+     * - LRRP packets: extracts GPS coordinates (lat/lon/heading/speed) from Point2d/Point3d tokens
+     * - XCMP packets: extracts message type and sets protocol to XCMP
+     * - Port 64414 UDP: identified as XCMP device management traffic
      */
     private void processPacketMessage(PacketMessage packet)
     {
@@ -266,16 +365,123 @@ public class P25DataCaptureModule extends Module implements IMessageListener
                 List<String> strings = PayloadStringScanner.scanStrings(bytes);
                 String protocol = PayloadStringScanner.detectProtocol(bytes);
 
-                CapturedPayload cp = CapturedPayload.builder(PayloadType.PDU_PACKET, packet.getTimestamp())
+                // Enrich protocol from details string if byte-level detection returned UNKNOWN
+                String details = packet.toString();
+                if("UNKNOWN".equals(protocol) || "IPv4".equals(protocol))
+                {
+                    String enriched = PayloadStringScanner.detectProtocolFromDetails(details);
+                    if(enriched != null)
+                    {
+                        protocol = enriched;
+                    }
+                }
+
+                // Walk the parsed packet hierarchy to extract structured data
+                PayloadType payloadType = PayloadType.PDU_PACKET;
+                double latitude = Double.NaN;
+                double longitude = Double.NaN;
+                double heading = Double.NaN;
+                double speed = Double.NaN;
+                String sapOrOpcode = "";
+
+                try
+                {
+                    IPacket parsedPacket = packet.getPacket();
+
+                    if(parsedPacket instanceof IPV4Packet ipv4)
+                    {
+                        IPacket ipPayload = ipv4.getPayload();
+
+                        if(ipPayload instanceof UDPPacket udp)
+                        {
+                            IPacket udpPayload = udp.getPayload();
+                            int dstPort = udp.getHeader().getDestinationPort().getValue();
+                            int srcPort = udp.getHeader().getSourcePort().getValue();
+                            sapOrOpcode = "UDP:" + srcPort + "→" + dstPort;
+
+                            if(udpPayload instanceof LRRPPacket lrrp)
+                            {
+                                // --- Priority 4: LRRP GPS Coordinate Extraction ---
+                                payloadType = PayloadType.LRRP;
+                                protocol = "LRRP";
+
+                                LRRPPacketType lrrpType = lrrp.getHeader().getLRRPPacketType();
+                                sapOrOpcode = "LRRP:" + lrrpType;
+
+                                // Extract GPS coordinates from LRRP response tokens
+                                for(Token token : lrrp.getTokens())
+                                {
+                                    if(token instanceof Point2d point)
+                                    {
+                                        latitude = point.getLatitude();
+                                        longitude = point.getLongitude();
+                                    }
+                                    else if(token instanceof Heading hdg)
+                                    {
+                                        heading = hdg.getHeading();
+                                    }
+                                    else if(token instanceof Speed spd)
+                                    {
+                                        speed = spd.getSpeed();
+                                    }
+                                }
+
+                                if(!Double.isNaN(latitude) && !Double.isNaN(longitude))
+                                {
+                                    mLog.info("LRRP GPS extracted: lat={}, lon={}, hdg={}, spd={}, from={}",
+                                        String.format("%.6f", latitude),
+                                        String.format("%.6f", longitude),
+                                        Double.isNaN(heading) ? "N/A" : String.format("%.0f", heading),
+                                        Double.isNaN(speed) ? "N/A" : String.format("%.1f", speed),
+                                        extractId(packet, Role.FROM));
+                                }
+                            }
+                            else if(udpPayload instanceof XCMPPacket xcmp)
+                            {
+                                // --- Priority 5: XCMP Packet Identification ---
+                                protocol = "XCMP";
+                                String xcmpType = xcmp.getHeader().getMessageType().toString();
+                                sapOrOpcode = "XCMP:" + xcmpType + " port:" + dstPort;
+
+                                mLog.debug("XCMP packet detected: type={}, port={}, from={}",
+                                    xcmpType, dstPort, extractId(packet, Role.FROM));
+                            }
+                            else if(dstPort == 64414 || srcPort == 64414)
+                            {
+                                // --- Priority 5: Port 64414 traffic (likely XCMP/XNL) ---
+                                protocol = "XCMP";
+                                sapOrOpcode = "UDP:" + srcPort + "→" + dstPort + " (XCMP?)";
+
+                                mLog.debug("Port 64414 traffic detected: {}→{}, from={}",
+                                    srcPort, dstPort, extractId(packet, Role.FROM));
+                            }
+                        }
+                    }
+                }
+                catch(Exception e)
+                {
+                    // Packet walking failed — continue with basic extraction
+                    mLog.debug("Error walking packet hierarchy: {}", e.getMessage());
+                }
+
+                CapturedPayload cp = CapturedPayload.builder(payloadType, packet.getTimestamp())
                         .messageClass(packet.getClass().getSimpleName())
-                        .details(packet.toString())
+                        .details(details)
                         .rawBytes(bytes)
                         .hexDump(PayloadStringScanner.toHexDump(bytes, MAX_DISPLAY_HEX_BYTES))
                         .detectedStrings(strings)
                         .fromId(extractId(packet, Role.FROM))
                         .toId(extractId(packet, Role.TO))
                         .detectedProtocol(protocol)
+                        .sapOrOpcode(sapOrOpcode)
+                        .frequency(mChannelFrequency)
+                        .channel(mChannelDescriptor)
+                        .mode(mChannelMode)
                         .payloadLength(bytes.length)
+                        .latitude(latitude)
+                        .longitude(longitude)
+                        .heading(heading)
+                        .speed(speed)
                         .build();
 
                 emit(cp);
@@ -306,9 +512,20 @@ public class P25DataCaptureModule extends Module implements IMessageListener
         List<String> strings = (bytes != null) ? PayloadStringScanner.scanStrings(bytes) : List.of();
         String protocol = (bytes != null) ? PayloadStringScanner.detectProtocol(bytes) : "SNDCP";
 
+        // Enrich protocol from details string
+        String details = sndcp.toString();
+        if("UNKNOWN".equals(protocol) || "SNDCP".equals(protocol) || "IPv4".equals(protocol))
+        {
+            String enriched = PayloadStringScanner.detectProtocolFromDetails(details);
+            if(enriched != null)
+            {
+                protocol = enriched;
+            }
+        }
+
         CapturedPayload cp = CapturedPayload.builder(PayloadType.SNDCP, sndcp.getTimestamp())
                 .messageClass(sndcp.getClass().getSimpleName())
-                .details(sndcp.toString())
+                .details(details)
                 .rawBytes(bytes)
                 .hexDump(bytes != null ? PayloadStringScanner.toHexDump(bytes, MAX_DISPLAY_HEX_BYTES) : "")
                 .detectedStrings(strings)
@@ -316,6 +533,9 @@ public class P25DataCaptureModule extends Module implements IMessageListener
                 .toId(extractId(sndcp, Role.TO))
                 .sapOrOpcode("SNDCP:" + sndcpType)
                 .detectedProtocol(protocol)
+                .frequency(mChannelFrequency)
+                .channel(mChannelDescriptor)
+                .mode(mChannelMode)
                 .payloadLength(bytes != null ? bytes.length : 0)
                 .build();
 
@@ -327,11 +547,18 @@ public class P25DataCaptureModule extends Module implements IMessageListener
      */
     private void processPDUMessage(PDUMessage pdu)
     {
+        String details = pdu.toString();
+        String protocol = PayloadStringScanner.detectProtocolFromDetails(details);
+
         CapturedPayload cp = CapturedPayload.builder(PayloadType.PDU_PACKET, pdu.getTimestamp())
                 .messageClass(pdu.getClass().getSimpleName())
-                .details(pdu.toString())
+                .details(details)
                 .fromId(extractId(pdu, Role.FROM))
                 .toId(extractId(pdu, Role.TO))
+                .detectedProtocol(protocol != null ? protocol : "")
+                .frequency(mChannelFrequency)
+                .channel(mChannelDescriptor)
+                .mode(mChannelMode)
                 .build();
 
         emit(cp);
@@ -344,11 +571,18 @@ public class P25DataCaptureModule extends Module implements IMessageListener
     {
         if(pduSeq.getPDUSequence() != null && pduSeq.getPDUSequence().isComplete())
         {
+            String seqDetails = pduSeq.toString();
+            String seqProtocol = PayloadStringScanner.detectProtocolFromDetails(seqDetails);
+
             CapturedPayload cp = CapturedPayload.builder(PayloadType.PDU_PACKET, pduSeq.getTimestamp())
                     .messageClass(pduSeq.getClass().getSimpleName())
-                    .details(pduSeq.toString())
+                    .details(seqDetails)
                     .fromId(extractId(pduSeq, Role.FROM))
                     .toId(extractId(pduSeq, Role.TO))
+                    .detectedProtocol(seqProtocol != null ? seqProtocol : "")
+                    .frequency(mChannelFrequency)
+                    .channel(mChannelDescriptor)
+                    .mode(mChannelMode)
                     .build();
 
             emit(cp);
@@ -382,6 +616,9 @@ public class P25DataCaptureModule extends Module implements IMessageListener
                 .detectedProtocol(lsdLabel)
                 .fromId(extractId(ldu, Role.FROM))
                 .toId(extractId(ldu, Role.TO))
+                .frequency(mChannelFrequency)
+                .channel(mChannelDescriptor)
+                .mode(mChannelMode)
                 .payloadLength(2)
                 .build();
 
@@ -389,8 +626,63 @@ public class P25DataCaptureModule extends Module implements IMessageListener
     }
 
     /**
-     * Process a Phase 2 MAC message — capture vendor/unknown MAC structures.
+     * Process a Motorola TDMA Data Channel (DATCH) timeslot — captures the raw descrambled
+     * 320-bit (40-byte) payload for offline analysis and corpus building.
+     *
+     * Change 023: Phase 2 TDMA data channels carry DATCH timeslots that contain data payloads
+     * (likely SNDCP/IP) but SDRTrunk currently doesn't decode them beyond descrambling.
+     * This method captures every DATCH timeslot's raw descrambled payload to the JSONL corpus
+     * and Data tab, enabling offline analysis to determine the FEC encoding, framing, and
+     * reassembly protocol.
+     *
+     * Each DATCH timeslot = 320 bits = 40 bytes. A typical 15-second data session produces
+     * ~400 timeslots = ~16,000 bytes of raw data that was previously discarded.
+     *
+     * @param datch the descrambled DATCH timeslot message
+     */
+    private void processDatchTimeslot(DatchTimeslot datch)
+    {
+        byte[] payload = datch.getDescrambledPayload();
+
+        if(payload == null || payload.length == 0)
+        {
+            return;
+        }
+
+        String hexDump = PayloadStringScanner.toHexDump(payload, MAX_DISPLAY_HEX_BYTES);
+        List<String> strings = PayloadStringScanner.scanStrings(payload);
+        String protocol = PayloadStringScanner.detectProtocol(payload);
+
+        // Include timeslot number in the SAP/opcode field for correlation
+        String sapOrOpcode = "DATCH:TS" + datch.getTimeslot();
+
+        CapturedPayload cp = CapturedPayload.builder(PayloadType.DATCH_RAW, datch.getTimestamp())
+                .messageClass("DatchTimeslot")
+                .details(datch.toString())
+                .rawBytes(payload)
+                .hexDump(hexDump)
+                .detectedStrings(strings)
+                .detectedProtocol(protocol)
+                .sapOrOpcode(sapOrOpcode)
+                .frequency(mChannelFrequency)
+                .channel(mChannelDescriptor)
+                .mode("TDMA")
+                .payloadLength(payload.length)
+                .build();
+
+        emit(cp);
+    }
+
+    /**
+     * Process a Phase 2 MAC message — capture vendor/unknown MAC structures and
+     * all MAC messages on TDMA data channels.
      * The opcode lives on MacStructure, not on MacMessage directly.
+     *
+     * Filters (Change 017/020):
+     * - MotorolaUnknownOpcode135 (opcode 0x87): SACCH idle fill, suppressed entirely
+     * - MotorolaTDMADataChannel (opcode 0x8B) IDLE: deduplicated per timeslot, only emitted on change
+     * - On TDMA data channels: capture ALL MAC messages (not just vendor/unknown)
+     *   to ensure SNDCP, PDU, and IP data carried on Phase 2 timeslots is captured
      */
     private void processMacMessage(MacMessage macMessage)
     {
@@ -411,6 +703,44 @@ public class P25DataCaptureModule extends Module implements IMessageListener
         PayloadType type;
         boolean capture = false;
         String opcodeName = opcode.name();
+        String structureClassName = structure.getClass().getSimpleName();
+
+        // --- Priority 1 SACCH idle noise filter ---
+
+        // Filter: MotorolaUnknownOpcode135 — repetitive SACCH idle fill on Phase 2 systems.
+        // These repeat every ~350ms on both timeslots and contain no useful data. Suppress entirely.
+        if(structureClassName.contains("MotorolaUnknownOpcode135"))
+        {
+            return;
+        }
+
+        // Filter: MotorolaTDMADataChannel IDLE messages — deduplicate per timeslot.
+        // Only emit when the details string changes (indicating a real state change).
+        if(structureClassName.contains("MotorolaTDMADataChannel"))
+        {
+            String details = macMessage.toString();
+            int timeslot = macMessage.getTimeslot();
+
+            if(timeslot == 2)
+            {
+                if(details.equals(mLastTdmaDataDetailsTS2))
+                {
+                    return; // Duplicate — suppress
+                }
+                mLastTdmaDataDetailsTS2 = details;
+            }
+            else
+            {
+                if(details.equals(mLastTdmaDataDetailsTS1))
+                {
+                    return; // Duplicate — suppress
+                }
+                mLastTdmaDataDetailsTS1 = details;
+            }
+            // Details changed — fall through to capture
+        }
+
+        // --- End Priority 1 filter ---
 
         // Capture unknown MAC structures
         if(structure instanceof UnknownMacStructure || structure instanceof UnknownVendorMessage)
@@ -441,8 +771,15 @@ public class P25DataCaptureModule extends Module implements IMessageListener
         {
             type = PayloadType.TSBK_STANDARD;
 
-            // Capture anything with interesting data content
-            if(opcodeName.contains("EXTENDED_FUNCTION") ||
+            // On TDMA channels, capture ALL MAC messages — Phase 2 data channels carry
+            // SNDCP/PDU/IP data via MAC structures that would otherwise be filtered out.
+            // This ensures we capture the inbound (radio→infra) data path on TS1/TS2.
+            if("TDMA".equals(mChannelMode))
+            {
+                capture = true;
+            }
+            // On non-TDMA channels, only capture specific interesting opcodes
+            else if(opcodeName.contains("EXTENDED_FUNCTION") ||
                opcodeName.contains("STATUS") ||
                opcodeName.contains("EMERGENCY") ||
                opcodeName.contains("REGROUP") ||
@@ -478,7 +815,7 @@ public class P25DataCaptureModule extends Module implements IMessageListener
         List<String> strings = (rawBytes != null) ? PayloadStringScanner.scanStrings(rawBytes) : List.of();
 
         CapturedPayload cp = CapturedPayload.builder(type, macMessage.getTimestamp())
-                .messageClass(structure.getClass().getSimpleName())
+                .messageClass(structureClassName)
                 .details(macMessage.toString())
                 .rawBytes(rawBytes)
                 .hexDump(rawHex)
@@ -486,6 +823,9 @@ public class P25DataCaptureModule extends Module implements IMessageListener
                 .fromId(extractId(macMessage, Role.FROM))
                 .toId(extractId(macMessage, Role.TO))
                 .sapOrOpcode("MAC:" + opcodeName)
+                .frequency(mChannelFrequency)
+                .channel(mChannelDescriptor)
+                .mode(mChannelMode)
                 .payloadLength(rawBytes != null ? rawBytes.length : 0)
                 .build();
 
@@ -595,6 +935,9 @@ public class P25DataCaptureModule extends Module implements IMessageListener
                 .fromId(extractId(tsbk, Role.FROM))
                 .toId(extractId(tsbk, Role.TO))
                 .sapOrOpcode(opcodeName)
+                .frequency(mChannelFrequency)
+                .channel(mChannelDescriptor)
+                .mode(mChannelMode)
                 .payloadLength(rawBytes != null ? rawBytes.length : 0)
                 .build();
 
@@ -607,9 +950,23 @@ public class P25DataCaptureModule extends Module implements IMessageListener
      * If this module has a parent (i.e. it's on a traffic channel), the payload
      * is forwarded to the parent module so it appears in the control channel's
      * Data tab and log file.
+     *
+     * Change 021: Zero-payload records (payloadLength == 0) are suppressed entirely.
+     * These are typically PDU ResponseMessage acknowledgments and other signaling
+     * records that contain no actual data payload. In the Jacksonville corpus,
+     * 78% of all records were zero-payload, drowning out actual data in both
+     * the UI and JSONL logs.
      */
     private void emit(CapturedPayload payload)
     {
+        // --- Zero-payload filter (Change 021) ---
+        // Skip records with no payload data. These are ACK/response records that
+        // clutter the Data tab and JSONL logs without contributing useful data.
+        if(payload.getPayloadLength() == 0)
+        {
+            return;
+        }
+
         // If we have a parent module, forward to it for aggregation
         if(mParentModule != null)
         {

@@ -93,6 +93,28 @@ public class P25P1MessageAssembler implements Listener<Dibit>
     }
 
     /**
+     * Reconfigure this assembler to continue assembling subsequent message blocks with an explicit message length.
+     * Used for extended PDU blocks (beyond block 5) where the message length is computed dynamically rather than
+     * being encoded in the DUID enum.
+     *
+     * @param duid for the subsequent message block to assemble.
+     * @param messageLength explicit target message length in bits.
+     */
+    public void reconfigure(P25P1DataUnitID duid, int messageLength)
+    {
+        mDataUnitID = duid;
+
+        if(mMessage != null)
+        {
+            mMessage.setSize(messageLength);
+        }
+        else
+        {
+            mMessage = new CorrectedBinaryMessage(messageLength);
+        }
+    }
+
+    /**
      * Forces this assembler to complete assembly of the current message.  Attempts to identify
      *
      *

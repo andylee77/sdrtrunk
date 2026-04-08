@@ -175,6 +175,69 @@ public class PayloadStringScanner
     }
 
     /**
+     * Detects the protocol from the message details string by looking for known keywords
+     * and port numbers. This is a fallback for when byte-level protocol detection returns
+     * UNKNOWN or a generic protocol like IPv4.
+     *
+     * Recognized patterns (Change 017):
+     * - Port 4001 UDP → LRRP (Location Request/Response Protocol)
+     * - Port 4005 UDP → ARS (Automatic Registration Service)
+     * - Port 64414 UDP → XCMP (Motorola eXtensible Command Message Protocol)
+     * - Keywords "LRRP" → LRRP
+     * - Keywords "ARS" with "REGISTRATION" → ARS
+     * - Keywords "SNDCP" → SNDCP
+     *
+     * @param details the message details/toString() string
+     * @return detected protocol name, or null if not recognized
+     */
+    public static String detectProtocolFromDetails(String details)
+    {
+        if(details == null || details.isEmpty())
+        {
+            return null;
+        }
+
+        // Check for well-known Motorola UDP port numbers in the details string
+        // Port patterns appear as ":4001" or "PORT:4001" or "DST PORT:4001" etc.
+        if(details.contains(":4001") || details.contains("PORT 4001"))
+        {
+            return "LRRP";
+        }
+
+        if(details.contains(":4005") || details.contains("PORT 4005"))
+        {
+            return "ARS";
+        }
+
+        if(details.contains(":64414") || details.contains("PORT 64414"))
+        {
+            return "XCMP";
+        }
+
+        // Keyword-based detection from decoded message content
+        String upper = details.toUpperCase();
+
+        if(upper.contains("LRRP"))
+        {
+            return "LRRP";
+        }
+
+        if(upper.contains("ARS") && (upper.contains("REGISTRATION") || upper.contains("REFRESH")))
+        {
+            return "ARS";
+        }
+
+        // SNDCP control messages (activate, deactivate, reject)
+        if(upper.contains("SNDCP") && (upper.contains("ACTIVATE") || upper.contains("DEACTIVATE") ||
+                upper.contains("REJECT") || upper.contains("CONTEXT")))
+        {
+            return "SNDCP";
+        }
+
+        return null;
+    }
+
+    /**
      * Converts a byte array to a hex dump string with space-separated bytes.
      * Limits output to maxBytes to prevent excessive string length.
      *

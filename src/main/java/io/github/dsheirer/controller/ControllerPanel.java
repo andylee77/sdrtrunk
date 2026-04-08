@@ -23,6 +23,7 @@ import io.github.dsheirer.audio.playback.AudioPanel;
 import io.github.dsheirer.audio.playback.AudioPlaybackManager;
 import io.github.dsheirer.channel.metadata.NowPlayingPanel;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.gui.analyzer.SignalAnalyzerPanel;
 import io.github.dsheirer.gui.playlist.ViewPlaylistRequest;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.map.MapPanel;
@@ -54,6 +55,7 @@ public class ControllerPanel extends JPanel
     private NowPlayingPanel mNowPlayingPanel;
     private MapPanel mMapPanel;
     private TunerViewPanel mTunerManagerPanel;
+    private SignalAnalyzerPanel mSignalAnalyzerPanel;
 
     private JideTabbedPane mTabbedPane;
 
@@ -77,6 +79,14 @@ public class ControllerPanel extends JPanel
     public NowPlayingPanel getNowPlayingPanel()
     {
         return mNowPlayingPanel;
+    }
+
+    /**
+     * Signal analyzer panel.
+     */
+    public SignalAnalyzerPanel getSignalAnalyzerPanel()
+    {
+        return mSignalAnalyzerPanel;
     }
 
     private void init()
@@ -105,6 +115,11 @@ public class ControllerPanel extends JPanel
         mTabbedPane.addTab("Now Playing", mNowPlayingPanel);
         mTabbedPane.addTab("Map", mMapPanel);
         mTabbedPane.addTab("Tuners", mTunerManagerPanel);
+
+        // Signal Analyzer tab — embedded panel for signal detection and analysis
+        Icon analyzerIcon = IconFontSwing.buildIcon(FontAwesome.SIGNAL, 20, Color.DARK_GRAY);
+        mSignalAnalyzerPanel = new SignalAnalyzerPanel();
+        mTabbedPane.addTab("Signal Analyzer", analyzerIcon, mSignalAnalyzerPanel);
 
         Icon playIcon = IconFontSwing.buildIcon(FontAwesome.PLAY_CIRCLE_O, 20, Color.DARK_GRAY);
         mTabbedPane.addTab("Playlist Editor", playIcon, new JLabel("Show Playlist Manager"));

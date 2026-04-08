@@ -1,51 +1,83 @@
-![Gradle Build](https://github.com/dsheirer/sdrtrunk/actions/workflows/gradle.yml/badge.svg)
-![Nightly Release](https://github.com/dsheirer/sdrtrunk/actions/workflows/nightly.yml/badge.svg)
+# SDRTrunk (andylee77 fork)
 
-# MacOS Tahoe 26.1 Users - Attention:
-Changes to USB support in Tahoe version 26.x cause sdrtrunk to fail to launch.  Do the following to install the latest libusb and create a symbolic link and then use the nightly build which includes an updated usb4java native library for Tahoe with ARM processor.  There may still be issue(s) with MacOS accessing your USB SDR tuners.
+A cross-platform Java application for decoding, monitoring, recording, and streaming trunked mobile radio protocols using Software Defined Radios (SDR).
 
+**Forked from [DSheirer/sdrtrunk](https://github.com/DSheirer/sdrtrunk)** — this fork adds PlutoSDR hardware support, P25 data capture and analysis tools, UI improvements, and signal analysis capabilities.
+
+## Fork Highlights
+
+### PlutoSDR Tuner Support
+
+- Full PlutoSDR integration via TCP companion server (libiio-based)
+- Add/remove PlutoSDR tuners at runtime with configuration persistence
+- Companion server and utilities in `tools/plutosdr/`
+
+### P25 Decoder Enhancements
+
+- **Ignore Encrypted Calls** — skip encrypted channel grants to save traffic channel slots
+- **Ignore Unmonitored Calls** — skip calls to talkgroups with no alias or "Do Not Monitor" priority
+- **Patch Call Duplicate Detection** — detect and suppress duplicate audio when member talkgroups of an active patch group receive individual grants
+- **Call Session Management** — per-talker call session tracking with FROM-radio splitting, Calls tab UI, and SQLite call log persistence
+- **Event Broadcasting Consolidation** — single-authority event model eliminates duplicate rows in Events tab
+- **Extended PDU Assembly** — supports up to 32 data blocks per PDU (up from 5), enabling capture of larger IP packets and LRRP responses
+
+### P25 Data Capture & Analysis
+
+- **Data Capture Module** — captures IP payloads, LRRP GPS coordinates, XCMP/XNL fleet management, ARS registrations, and SNDCP session data
+- **Phase 2 TDMA Data Channel (DATCH) Raw Capture** — captures raw 40-byte descrambled payloads from Motorola TDMA data sessions
+- **Data Tab** — filterable UI with protocol coloring, GPS column, hex payload display, and per-system JSONL logging
+- **Corpus Analysis Tools** — Python scripts for deep protocol analysis (`tools/`)
+
+### Signal Analyzer (Phase 1)
+
+- New Signal Analyzer tab with FFT-based signal detection
+- Noise floor estimation, peak detection, and frame averaging
+- Signal tracking with frequency proximity matching
+- Artifact flagging: DC offset, harmonics, image frequencies
+
+### UI Improvements
+
+- **Spectrum/Waterfall** — reference level control and corrected dB calculation
+- **Audio Channel Routing** — per-channel routing filters (Off/All/System/Group), per-channel mute, per-talkgroup mute, visible volume slider
+- **Events Tab** — color-coded status column (active/ended/ignored), pre-filter mode, filtered save-to-CSV
+- **Patch Group Column** — shows patch group membership in Events tab
+
+## Building from Source
+
+### Requirements
+
+- **JDK:** Bellsoft Liberica JDK 25 (with JavaFX modules)
+- **Gradle:** 8.10+ (via included wrapper)
+
+### Commands
+
+```bash
+# Run from source
+./gradlew run
+
+# Build release zip
+./gradlew runtimeZipCurrent
+
+# Run tests
+./gradlew test
+
+# Clean
+./gradlew clean
 ```
-brew install libusb --HEAD
-cd /opt
-sudo mkdir local
-cd local
-sudo mkdir lib
-```
-Next, find where brew installed the libusb library, for example: ```/opt/homebrew/Cellar/libusb/HEAD-9ceaa52/lib/libusb-1.0.0.dylib```    Note: the folder "HEAD-9ceaa52" is the version stamp for HEAD when you installed from it.
 
-Finally, create a symbolic link from the installed library to the place where usb4java is expecting to find libusb (/opt/local/lib/libusb-1.0.0.dylib)
+## System Requirements
 
-```
-sudo ln -s /opt/homebrew/Cellar/libusb/HEAD-9ceaa52/lib/libusb-1.0.0.dylib /opt/local/lib/libusb-1.0.0.dylib
-```
+- **OS:** Windows 64-bit, Linux 64-bit, or macOS 64-bit (12.x+)
+- **CPU:** 4-core
+- **RAM:** 8GB recommended (4GB minimum depending on usage)
 
-# sdrtrunk
-A cross-platform java application for decoding, monitoring, recording and streaming trunked mobile and related radio protocols using Software Defined Radios (SDR).
+## Documentation
 
-* [Help/Wiki Home Page](https://github.com/DSheirer/sdrtrunk/wiki)
-* [Getting Started](https://github.com/DSheirer/sdrtrunk/wiki/Getting-Started)
-* [User's Manual](https://github.com/DSheirer/sdrtrunk/wiki/User-Manual)
-* [Download](https://github.com/DSheirer/sdrtrunk/releases)
-* [Support](https://github.com/DSheirer/sdrtrunk/wiki/Support)
+- [CHANGELOG_FORK.md](CHANGELOG_FORK.md) — Detailed changelog for all fork changes
+- [doc/changes/](doc/changes/) — Per-change documentation
+- [doc/design/](doc/design/) — Design documents and analysis findings
+- [Upstream Wiki](https://github.com/DSheirer/sdrtrunk/wiki) — Getting started, user manual, and support
 
-![sdrtrunk Application](https://github.com/DSheirer/sdrtrunk/wiki/images/sdrtrunk.png)
-**Figure 1:** sdrtrunk Application Screenshot
+## Upstream
 
-## Download the Latest Release
-All release versions of sdrtrunk are available from the [releases](https://github.com/DSheirer/sdrtrunk/releases) tab.
-
-* **(alpha)** These versions are under development feature previews and likely to contain bugs and unexpected behavior.
-* **(beta)** These versions are currently being tested for bugs and functionality prior to final release.
-* **(final)** These versions have been tested and are the current release version.
-
-## Download Nightly Software Build
-The [nightly](https://github.com/DSheirer/sdrtrunk/releases/tag/nightly) release contains current builds of the software 
-for all supported operating systems.  This version of the software may contain bugs and may not run correctly.  However, 
-it let's you preview the most recent changes and fixes before the next software release.  **Always backup your 
-playlist(s) before you use the nightly builds.**  Note: the nightly release is updated each time code changes are 
-committed to the code base, so it's not really 'nightly' as much as it is 'current'.
-
-## Minimum System Requirements
-* **Operating System:** Windows (~~32 or~~ 64-bit), Linux (~~32 or~~ 64-bit) or Mac (64-bit, 12.x or higher)
-* **CPU:** 4-core
-* **RAM:** 8GB or more (preferred).  Depending on usage, 4GB may be sufficient.
+This fork tracks [DSheirer/sdrtrunk](https://github.com/DSheirer/sdrtrunk). The `master` branch is kept clean for upstream syncing; all fork work is on feature branches.

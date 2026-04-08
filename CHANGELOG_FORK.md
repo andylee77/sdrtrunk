@@ -441,7 +441,43 @@ Extensive work documents accumulated in `C:\Users\Andy\Projects\SDRTrunk\work_do
 
 ---
 
-## [2026-03-25] Design 024: Signal Analyzer Tab (Design Complete — Not Yet Implemented)
+## [2026-03-25] Change 024: Signal Analyzer Tab — Phase 1: Detection UI
+
+**Implemented the Signal Analyzer feature — FFT-based signal detection, tracking, and artifact flagging.**
+
+### New Files (13)
+- `gui/analyzer/AnalysisStatus.java` — Signal lifecycle states (DETECTED, CONFIRMED, LOST, IGNORED)
+- `gui/analyzer/ModulationType.java` — Placeholder enum for Phase 2 modulation classification
+- `gui/analyzer/SignalAnalyzerConfig.java` — Tunable detection parameters (threshold, min BW, averaging, etc.)
+- `gui/analyzer/SignalAnalyzerController.java` — Main orchestrator implementing DFTResultsListener + ISourceEventProcessor
+- `gui/analyzer/SignalAnalyzerPanel.java` — Main panel assembling control, table, and log components
+- `gui/analyzer/detection/SignalFlag.java` — Artifact classification flags (DC_OFFSET, HARMONIC, IMAGE, WEAK, WIDEBAND)
+- `gui/analyzer/detection/DetectedSignal.java` — Data model for detected signals
+- `gui/analyzer/detection/SignalDetector.java` — Core FFT peak finder with noise floor estimation and frame averaging
+- `gui/analyzer/detection/SignalTracker.java` — Merges detections with tracked signals using frequency proximity
+- `gui/analyzer/detection/HarmonicAnalyzer.java` — DC spike, harmonic, and image frequency flagging
+- `gui/analyzer/ui/SignalAnalysisTableModel.java` — Table model for signal display
+- `gui/analyzer/ui/AnalyzerControlPanel.java` — Start/Stop/Clear controls, threshold slider, mode toggle
+- `gui/analyzer/ui/AnalysisLogPanel.java` — Color-coded scrolling analysis log
+
+### Modified Files (3)
+- `spectrum/SpectralDisplayPanel.java` — Added addDftResultsListener/addSourceEventProcessor for external tap
+- `controller/ControllerPanel.java` — Added Signal Analyzer tab with FontAwesome SIGNAL icon
+- `gui/SDRTrunk.java` — Wired controller as DFTResultsListener + ISourceEventProcessor
+
+### Detection Algorithm
+- Noise floor estimation from median of lower FFT bins
+- Peak detection above configurable threshold (default 10 dB above noise floor)
+- Frame averaging (8 frames) to smooth transients
+- Signal tracking with frequency proximity matching
+- Artifact flagging: DC offset, harmonics, image frequencies, weak/wideband signals
+
+### Documentation
+- `doc/changes/024_signal_analyzer.md` — Detailed change doc
+
+---
+
+## [2026-03-25] Design 024: Signal Analyzer Tab (Design Document)
 
 **Comprehensive design document for automated signal detection, characterization, and protocol identification.**
 
@@ -469,7 +505,7 @@ Implementation: 3 phases (Phase 1: Detection UI, Phase 2: Characterization, Phas
 
 ## Pending / Future
 
-- [ ] Signal Analyzer Tab — Phase 1: Tab UI + Signal Detection
+- [x] Signal Analyzer Tab — Phase 1: Tab UI + Signal Detection ✅ (2026-03-25)
 - [ ] Signal Analyzer Tab — Phase 2: Signal Characterization (modulation analysis)
 - [ ] Signal Analyzer Tab — Phase 3: Protocol Identification + Logging
 - [ ] Finalize PlutoSDR tuner integration with Maia IQ streaming

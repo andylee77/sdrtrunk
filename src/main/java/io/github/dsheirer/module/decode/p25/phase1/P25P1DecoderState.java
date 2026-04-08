@@ -2181,10 +2181,13 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         super.start();
 
-        //Change the default (45-second) traffic channel timeout to 1 second
+        //Change the default (45-second) traffic channel timeout to 3 seconds.
+        //Previously 1 second, which was too aggressive for data channels where PDU bursts can have
+        //gaps between transmissions. 3 seconds provides enough time to capture complete data sessions
+        //while still releasing idle traffic channels promptly.
         if(mChannel.isTrafficChannel())
         {
-            broadcast(new ChangeChannelTimeoutEvent(this, ChannelType.TRAFFIC, 1000));
+            broadcast(new ChangeChannelTimeoutEvent(this, ChannelType.TRAFFIC, 3000));
         }
     }
 

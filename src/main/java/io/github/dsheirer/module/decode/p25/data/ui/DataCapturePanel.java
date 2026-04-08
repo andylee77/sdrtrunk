@@ -1,3 +1,4 @@
+
 /*
  * *****************************************************************************
  * Copyright (C) 2014-2026 Dennis Sheirer
@@ -34,6 +35,8 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 import net.miginfocom.swing.MigLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -86,6 +89,9 @@ public class DataCapturePanel extends JPanel implements Listener<ProcessingChain
 
     /** Currently wired data capture module — used to unregister when switching channels */
     private P25DataCaptureModule mCurrentModule;
+
+    /** Per-module model cache — preserves data when switching between channels */
+    private final Map<P25DataCaptureModule, DataCaptureModel> mModelCache = new HashMap<>();
 
     /**
      * Constructs an instance.
@@ -259,6 +265,17 @@ public class DataCapturePanel extends JPanel implements Listener<ProcessingChain
         });
         menu.add(copyJson);
 
+        // Copy GPS (only shown if GPS data present)
+        if(payload.hasGpsCoordinates())
+        {
+            JMenuItem copyGps = new JMenuItem("Copy GPS (" + payload.getGpsDisplay() + ")");
+            copyGps.addActionListener(a -> {
+                String gps = payload.getLatitude() + ", " + payload.getLongitude();
+                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(gps), null);
+            });
+            menu.add(copyGps);
+        }
+
         menu.show(mTable, e.getX(), e.getY());
     }
 
@@ -269,11 +286,15 @@ public class DataCapturePanel extends JPanel implements Listener<ProcessingChain
     {
         mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_TIME).setPreferredWidth(100);
         mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_TYPE).setPreferredWidth(50);
+        mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_MODE).setPreferredWidth(45);
+        mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_CHANNEL).setPreferredWidth(60);
+        mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_FREQ).setPreferredWidth(75);
         mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_SAP_OPCODE).setPreferredWidth(120);
         mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_FROM).setPreferredWidth(80);
         mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_TO).setPreferredWidth(80);
         mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_LENGTH).setPreferredWidth(40);
         mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_PROTOCOL).setPreferredWidth(60);
+        mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_GPS).setPreferredWidth(200);
         mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_HEX).setPreferredWidth(250);
         mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_STRINGS).setPreferredWidth(150);
         mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_DETAILS).setPreferredWidth(300);
@@ -286,27 +307,52 @@ public class DataCapturePanel extends JPanel implements Listener<ProcessingChain
     {
         mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_TIME).setCellRenderer(mTimestampCellRenderer);
         mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_TYPE).setCellRenderer(new TypeCellRenderer());
+        mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_MODE).setCellRenderer(new ModeCellRenderer());
+        mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_CHANNEL).setCellRenderer(new CenteredCellRenderer());
+        mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_FREQ).setCellRenderer(new CenteredCellRenderer());
         mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_LENGTH).setCellRenderer(new CenteredCellRenderer());
         mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_PROTOCOL).setCellRenderer(new ProtocolCellRenderer());
+        mTable.getColumnModel().getColumn(DataCaptureModel.COLUMN_GPS).setCellRenderer(new GpsCellRenderer());
+    }
+
+    /**
+     * Swaps the active model to a new one, re-wiring the table, sorter, and row-count listener.
+     */
+    private void swapModel(DataCaptureModel newModel)
+    {
+        mModel = newModel;
+        mTable.setModel(mModel);
+        mRowSorter = new TableRowSorter<>(mModel);
+        mTable.setRowSorter(mRowSorter);
+
+        // Re-apply renderers and column widths after model swap
+        updateCellRenderers();
+        setColumnWidths();
+
+        // Re-apply current filter
+        onFilterChanged(null);
+
+        // Re-wire row count listener
+        mModel.addTableModelListener(e -> updateRowCount());
     }
 
     /**
      * Called when the user selects a different channel in the NowPlaying table.
      * Discovers the P25DataCaptureModule and wires the model as a payload listener.
+     * Uses per-module model cache so data persists when switching between channels.
      */
     @Override
     public void receive(final ProcessingChain processingChain)
     {
         EventQueue.invokeLater(() -> {
-            // Unregister from previous module
+            // Unregister from previous module (but keep its model in cache)
             if(mCurrentModule != null)
             {
                 mCurrentModule.removePayloadListener(mModel);
                 mCurrentModule = null;
             }
 
-            // Clear the model
-            mModel.clear();
+            P25DataCaptureModule newModule = null;
 
             if(processingChain != null)
             {
@@ -315,11 +361,32 @@ public class DataCapturePanel extends JPanel implements Listener<ProcessingChain
                 {
                     if(module instanceof P25DataCaptureModule dcm)
                     {
-                        mCurrentModule = dcm;
-                        dcm.addPayloadListener(mModel);
+                        newModule = dcm;
                         break;
                     }
                 }
+            }
+
+            if(newModule != null)
+            {
+                mCurrentModule = newModule;
+
+                // Get or create cached model for this module
+                DataCaptureModel cachedModel = mModelCache.computeIfAbsent(newModule, k -> new DataCaptureModel());
+
+                // Swap model if different from current
+                if(cachedModel != mModel)
+                {
+                    swapModel(cachedModel);
+                }
+
+                // Wire listener (idempotent — addPayloadListener should handle duplicates)
+                newModule.addPayloadListener(mModel);
+            }
+            else
+            {
+                // No P25 data module — show empty model
+                swapModel(new DataCaptureModel());
             }
 
             updateRowCount();
@@ -484,10 +551,84 @@ public class DataCapturePanel extends JPanel implements Listener<ProcessingChain
                     case "VENDOR":
                         label.setForeground(new Color(200, 120, 0));
                         break;
+                    case "XCMP":
+                        label.setForeground(new Color(180, 0, 180));
+                        break;
+                    case "ARS":
+                        label.setForeground(new Color(0, 120, 160));
+                        break;
+                    case "SNDCP":
+                        label.setForeground(new Color(0, 140, 120));
+                        break;
                     default:
                         label.setForeground(table.getForeground());
                         break;
                 }
+            }
+
+            return label;
+        }
+    }
+
+    /**
+     * Mode cell renderer — color-codes FDMA vs TDMA.
+     */
+    public class ModeCellRenderer extends DefaultTableCellRenderer
+    {
+        private static final Color COLOR_FDMA = new Color(0, 100, 180);
+        private static final Color COLOR_TDMA = new Color(180, 80, 0);
+
+        public ModeCellRenderer()
+        {
+            setHorizontalAlignment(JLabel.CENTER);
+        }
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
+                                                       boolean hasFocus, int row, int column)
+        {
+            JLabel label = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+
+            if(!isSelected && value instanceof String mode)
+            {
+                switch(mode)
+                {
+                    case "FDMA":
+                        label.setForeground(COLOR_FDMA);
+                        break;
+                    case "TDMA":
+                        label.setForeground(COLOR_TDMA);
+                        break;
+                    default:
+                        label.setForeground(table.getForeground());
+                        break;
+                }
+            }
+
+            return label;
+        }
+    }
+
+    /**
+     * GPS cell renderer — highlights cells that contain GPS coordinates in green.
+     */
+    public class GpsCellRenderer extends DefaultTableCellRenderer
+    {
+        private static final Color COLOR_GPS = new Color(0, 140, 0);
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
+                                                       boolean hasFocus, int row, int column)
+        {
+            JLabel label = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+
+            if(!isSelected && value instanceof String gps && !gps.isEmpty())
+            {
+                label.setForeground(COLOR_GPS);
+            }
+            else if(!isSelected)
+            {
+                label.setForeground(table.getForeground());
             }
 
             return label;

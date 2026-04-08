@@ -40,6 +40,12 @@ import java.util.List;
  */
 public class DatchTimeslot extends Timeslot
 {
+    /** Size of the DATCH timeslot payload in bits */
+    public static final int PAYLOAD_BITS = 320;
+
+    /** Size of the DATCH timeslot payload in bytes */
+    public static final int PAYLOAD_BYTES = PAYLOAD_BITS / 8; // 40 bytes
+
     /**
      * Constructs a scrambled DATCH timeslot
      *
@@ -52,6 +58,28 @@ public class DatchTimeslot extends Timeslot
                          long timestamp)
     {
         super(message, DataUnitID.SCRAMBLED_DATCH, scramblingSequence, timeslot, timestamp);
+    }
+
+    /**
+     * Returns the descrambled payload as a byte array (40 bytes / 320 bits).
+     * The message has already been descrambled by the superclass constructor via XOR
+     * with the scrambling sequence, so this returns the descrambled content.
+     *
+     * @return 40-byte array containing the descrambled DATCH timeslot payload
+     */
+    public byte[] getDescrambledPayload()
+    {
+        return getMessage().getBytes();
+    }
+
+    /**
+     * Returns the descrambled payload as a hex string for logging and display.
+     *
+     * @return hex string of the 40-byte descrambled payload
+     */
+    public String getDescrambledPayloadHex()
+    {
+        return getMessage().toHexString();
     }
 
     @Override
